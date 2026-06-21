@@ -1,6 +1,6 @@
 # qwqlang  ✨
 
-Ciallo~  Welcome to **qwqlang** – a smow, dynamwicawly typed scwipting wanguage with a Rust‑based compiwew and a stack‑based viwtuaw machine. It bwends familiaw syntax fwom Rust, JavaScwipt, and Ewixiw, and offews modern featuwes wike pipe opewatows, wabewwed woops, and fiwst‑cwass cwosuwes with expwicit captuwes. ～☆
+Ciallo~  Welcome to **qwqlang** – a smow, dynamwicawly typed scwipting wanguage with a Rust‑based compiwew and a stack‑based viwtuaw machine. It bwends familiaw syntax fwom Rust, JavaScwipt, and Ewixiw, and offews modern featuwes wike pipe opewatows, wabewwed woops, and fiwst‑cwass cwosuwes with expwicit captures. ～☆
 
 ## Features ～✧
 
@@ -9,7 +9,7 @@ Ciallo~  Welcome to **qwqlang** – a smow, dynamwicawly typed scwipting wanguag
 - **Logica opewatows** – `and` / `or` with showt‑ciwcuit evawuation
 - **Contwow fwow** – `if`/`else`, `loop`, `break` (with optionaw wabew and wetuwn vawue)
 - **Functions** – named (`fn`) and anonnymous awWow functions (`|x, y| x + y`)
-- **Cwosuwes** – captuwe outew vawiabwes expwicitwy using `[captuwe]` syntax
+- **Cwosuwes** – capture outew vawiabwes expwicitwy using `[capture]` syntax
 - **Pipe opewatow** – `|>` with `_` pwacehowdew fow concwise chaining
 - **Stwings** – doubwe‑qwoted, with concatenation via `+`
 - **EwWow messages** – hewpfuw suggesstions fow undefined vawiabwes (Levenshtein distance)
@@ -117,7 +117,7 @@ let double = |x| x * 2;
 double(5)   // 10
 ```
 
-### Cwosuwes & Expwicit Captuwes
+### Cwosuwes & Expwicit Captures
 
 ```
 mut x = 0;
