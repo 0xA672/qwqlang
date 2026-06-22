@@ -36,7 +36,7 @@ pub enum Op {
     Call = 25,
     Return = 26,
     GetBuiltin = 27,
-    CaptureGlobal = 30,  // Capture a global variable by reference
+    CaptureGlobal = 30, // Capture a global variable by reference
 }
 
 #[derive(Debug)]
@@ -83,10 +83,10 @@ impl Comp {
             self.stmt(stmt)?;
         }
         self.emit_op(Op::Return);
-        
+
         eprintln!("DEBUG: bytecode = {:?}", self.bytecode);
         eprintln!("DEBUG: constants = {:?}", self.constants);
-        
+
         Ok(CompiledFunction {
             bytecode: self.bytecode.clone(),
             constants: self.constants.clone(),
@@ -189,7 +189,12 @@ impl Comp {
                     self.stmt(s)?;
                 }
             }
-            Stmt::If { cond, then_blk, else_blk, .. } => {
+            Stmt::If {
+                cond,
+                then_blk,
+                else_blk,
+                ..
+            } => {
                 self.expr(cond)?;
                 let else_jump = self.emit_jump_if_false_pop();
                 self.stmt(then_blk)?;
@@ -206,7 +211,8 @@ impl Comp {
             }
             Stmt::Loop { label, body, .. } => {
                 let loop_start = self.bytecode.len();
-                self.loop_stack.push((loop_start, label.clone(), Vec::new()));
+                self.loop_stack
+                    .push((loop_start, label.clone(), Vec::new()));
                 self.stmt(body)?;
                 let jump_pos = self.bytecode.len();
                 self.emit_op(Op::Jump);
@@ -219,7 +225,7 @@ impl Comp {
                 self.emit_op(Op::Pop);
                 self.emit_op(Op::Null);
                 let loop_end = self.bytecode.len();
-                
+
                 // Patch each break jump individually based on whether it has a value
                 let mut any_break_has_value = false;
                 if let Some((_, _, break_positions)) = self.loop_stack.last() {
@@ -243,9 +249,9 @@ impl Comp {
                         }
                     }
                 }
-                
+
                 self.loop_stack.pop();
-                
+
                 // If any break has a value, remove the Pop+Null we emitted
                 if any_break_has_value {
                     self.bytecode.truncate(pre_cleanup_len);
@@ -253,26 +259,30 @@ impl Comp {
             }
             Stmt::Break { label, value, pos } => {
                 let loop_idx = if let Some(label) = label {
-                    self.loop_stack.iter().rposition(|(_, l, _)| l.as_deref() == Some(label))
+                    self.loop_stack
+                        .iter()
+                        .rposition(|(_, l, _)| l.as_deref() == Some(label))
                         .ok_or_else(|| Error::Compile {
                             pos: *pos,
                             msg: format!("undefined label '{}'", label),
                         })?
                 } else {
-                    self.loop_stack.len().checked_sub(1)
+                    self.loop_stack
+                        .len()
+                        .checked_sub(1)
                         .ok_or_else(|| Error::Compile {
                             pos: *pos,
                             msg: "break outside loop".to_string(),
                         })?
                 };
-                
+
                 let has_value = value.is_some();
-                
+
                 // If break has a value, push it onto the stack
                 if let Some(value) = value {
                     self.expr(value)?;
                 }
-                
+
                 // Record break position for patching later, along with value flag
                 self.emit_op(Op::Jump);
                 let break_pos = self.bytecode.len();
@@ -297,7 +307,13 @@ impl Comp {
     fn expr(&mut self, expr: &Expr) -> Result<(), Error> {
         match expr {
             Expr::Null(_) => self.emit_op(Op::Null),
-            Expr::Bool(b, _) => if *b { self.emit_op(Op::True) } else { self.emit_op(Op::False) },
+            Expr::Bool(b, _) => {
+                if *b {
+                    self.emit_op(Op::True)
+                } else {
+                    self.emit_op(Op::False)
+                }
+            }
             Expr::Num(n, _) => {
                 let idx = self.add_constant(Value::Num(*n));
                 self.emit_op(Op::Constant);
@@ -309,7 +325,10 @@ impl Comp {
                 self.emit_u16(idx as u16);
             }
             Expr::Ident(name, pos) => {
-                eprintln!("DEBUG Ident: name={}, locals={:?}, globals={:?}", name, self.locals, self.globals);
+                eprintln!(
+                    "DEBUG Ident: name={}, locals={:?}, globals={:?}",
+                    name, self.locals, self.globals
+                );
                 if let Some(idx) = self.locals.iter().position(|(n, _)| n == name) {
                     eprintln!("DEBUG Ident: using GetLocal idx={}", idx);
                     self.emit_op(Op::GetLocal);
@@ -329,7 +348,9 @@ impl Comp {
                     return self.undefined_var_error(name, *pos);
                 }
             }
-            Expr::BinOp { op, left, right, .. } => {
+            Expr::BinOp {
+                op, left, right, ..
+            } => {
                 if *op == BinOp::And {
                     return self.and_expr(left, right);
                 }
@@ -373,28 +394,58 @@ impl Comp {
                 self.emit_op(Op::Call);
                 self.emit_u16(args.len() as u16);
             }
-            Expr::Func { params, captures, body, pos } => {
+            Expr::Func {
+                params,
+                captures,
+                body,
+                pos,
+            } => {
                 self.compile_func(params, captures, body, *pos)?;
             }
-            Expr::Arrow { params, body, is_block, .. } => {
+            Expr::Arrow {
+                params,
+                body,
+                is_block,
+                ..
+            } => {
                 if *is_block {
-                    if let Expr::Func { params: _, captures: _, body: inner_body, pos: _ } = &**body {
+                    if let Expr::Func {
+                        params: _,
+                        captures: _,
+                        body: inner_body,
+                        pos: _,
+                    } = &**body
+                    {
                         self.compile_func(params, &[], &**inner_body, Pos { line: 1, col: 1 })?;
                     }
                 } else {
                     let body_expr = (**body).clone();
-                    let body_stmt = Stmt::Block(vec![Stmt::Return { value: Some(body_expr), pos: Pos { line: 1, col: 1 } }]);
+                    let body_stmt = Stmt::Block(vec![Stmt::Return {
+                        value: Some(body_expr),
+                        pos: Pos { line: 1, col: 1 },
+                    }]);
                     self.compile_func(params, &[], &body_stmt, Pos { line: 1, col: 1 })?;
                 }
             }
-            Expr::Pipe { left, right, has_placeholder, .. } => {
+            Expr::Pipe {
+                left,
+                right,
+                has_placeholder,
+                ..
+            } => {
                 if *has_placeholder {
                     eprintln!("DEBUG: Compiling pipe with placeholder");
                     let right_expr = (**right).clone();
-                    let body_stmt = Stmt::Block(vec![
-                        Stmt::Return { value: Some(right_expr), pos: Pos { line: 1, col: 1 } }
-                    ]);
-                    self.compile_func(&["_".to_string()], &[], &body_stmt, Pos { line: 1, col: 1 })?;
+                    let body_stmt = Stmt::Block(vec![Stmt::Return {
+                        value: Some(right_expr),
+                        pos: Pos { line: 1, col: 1 },
+                    }]);
+                    self.compile_func(
+                        &["_".to_string()],
+                        &[],
+                        &body_stmt,
+                        Pos { line: 1, col: 1 },
+                    )?;
                     self.expr(left)?;
                 } else {
                     self.expr(right)?;
@@ -423,34 +474,44 @@ impl Comp {
         Ok(())
     }
 
-    fn compile_func(&mut self, params: &[String], captures: &[String], body: &Stmt, pos: Pos) -> Result<(), Error> {
+    fn compile_func(
+        &mut self,
+        params: &[String],
+        captures: &[String],
+        body: &Stmt,
+        pos: Pos,
+    ) -> Result<(), Error> {
         let saved_locals = self.locals.clone();
         let saved_free = self.free.clone();
         let saved_loop_stack = self.loop_stack.clone();
-        
+
         self.locals = Vec::new();
         self.free = Vec::new();
         self.loop_stack = Vec::new();
-        
+
         for param in params {
             self.locals.push((param.clone(), false));
         }
-        
+
         let mut capture_set = HashSet::new();
         for cap in captures {
             capture_set.insert(cap.clone());
         }
-        
+
         let mut vars_used = HashSet::new();
         self.find_used_vars(body, &mut vars_used);
-        
+
         // Collect locally-declared variables to avoid treating them as free variables
         let mut declared = HashSet::new();
         self.find_declared_vars(body, &mut declared);
-        
+
         for var in &vars_used {
-            if params.contains(var) { continue; }
-            if declared.contains(var) { continue; }
+            if params.contains(var) {
+                continue;
+            }
+            if declared.contains(var) {
+                continue;
+            }
             if let Some((is_mut, _is_local)) = self.find_var(var, &saved_locals, &saved_free) {
                 if is_mut && !capture_set.contains(var) {
                     return Err(Error::Compile {
@@ -461,7 +522,7 @@ impl Comp {
                 self.free.push((var.clone(), is_mut));
             }
         }
-        
+
         for cap in captures {
             if !self.free.iter().any(|(n, _)| n == cap) {
                 return Err(Error::Compile {
@@ -470,22 +531,22 @@ impl Comp {
                 });
             }
         }
-        
+
         self.func_stack.push(FuncCtx {
             locals: saved_locals.clone(),
             free: saved_free.clone(),
             captures: capture_set,
         });
-        
+
         let saved_bytecode = std::mem::take(&mut self.bytecode);
-        
+
         self.stmt(body)?;
         self.emit_op(Op::Return);
-        
+
         let func_bytecode = std::mem::take(&mut self.bytecode);
-        
+
         self.bytecode = saved_bytecode;
-        
+
         let func = CompiledFunction {
             bytecode: func_bytecode,
             constants: self.constants.clone(),
@@ -493,9 +554,9 @@ impl Comp {
             num_params: params.len() as u16,
             num_free: self.free.len() as u16,
         };
-        
+
         let func_idx = self.add_constant(Value::Func(func));
-        
+
         // Emit instructions to push captured values onto the stack
         let free_vars = self.free.clone();
         for (name, _is_mut) in &free_vars {
@@ -512,21 +573,26 @@ impl Comp {
                 self.emit_u16(idx as u16);
             }
         }
-        
+
         self.locals = saved_locals;
         let num_free = self.free.len();
         self.free = saved_free;
         self.loop_stack = saved_loop_stack;
         self.func_stack.pop();
-        
+
         self.emit_op(Op::Closure);
         self.emit_u16(func_idx as u16);
         self.emit_u16(num_free as u16);
-        
+
         Ok(())
     }
 
-    fn find_var(&self, name: &str, locals: &[(String, bool)], free: &[(String, bool)]) -> Option<(bool, bool)> {
+    fn find_var(
+        &self,
+        name: &str,
+        locals: &[(String, bool)],
+        free: &[(String, bool)],
+    ) -> Option<(bool, bool)> {
         if let Some((_, is_mut)) = locals.iter().find(|(n, _)| n == name) {
             return Some((*is_mut, true));
         }
@@ -590,7 +656,12 @@ impl Comp {
                     self.find_used_vars(s, vars);
                 }
             }
-            Stmt::If { cond, then_blk, else_blk, .. } => {
+            Stmt::If {
+                cond,
+                then_blk,
+                else_blk,
+                ..
+            } => {
                 self.find_used_vars_in_expr(cond, vars);
                 self.find_used_vars(then_blk, vars);
                 if let Some(b) = else_blk {
@@ -614,7 +685,9 @@ impl Comp {
 
     fn find_used_vars_in_expr(&self, expr: &Expr, vars: &mut HashSet<String>) {
         match expr {
-            Expr::Ident(name, _) => { vars.insert(name.clone()); }
+            Expr::Ident(name, _) => {
+                vars.insert(name.clone());
+            }
             Expr::BinOp { left, right, .. } => {
                 self.find_used_vars_in_expr(left, vars);
                 self.find_used_vars_in_expr(right, vars);
@@ -629,7 +702,10 @@ impl Comp {
             Expr::Func { body, .. } => self.find_used_vars(body, vars),
             Expr::Arrow { body, is_block, .. } => {
                 if *is_block {
-                    if let Expr::Func { body: inner_body, .. } = &**body {
+                    if let Expr::Func {
+                        body: inner_body, ..
+                    } = &**body
+                    {
                         self.find_used_vars(inner_body, vars);
                     }
                 } else {
@@ -648,14 +724,20 @@ impl Comp {
     /// These are variables declared via `let`, `mut`, or `fn` (which desugars to let).
     fn find_declared_vars(&self, stmt: &Stmt, declared: &mut HashSet<String>) {
         match stmt {
-            Stmt::Let { name, .. } => { declared.insert(name.clone()); }
-            Stmt::Mut { name, .. } => { declared.insert(name.clone()); }
+            Stmt::Let { name, .. } => {
+                declared.insert(name.clone());
+            }
+            Stmt::Mut { name, .. } => {
+                declared.insert(name.clone());
+            }
             Stmt::Block(stmts) => {
                 for s in stmts {
                     self.find_declared_vars(s, declared);
                 }
             }
-            Stmt::If { then_blk, else_blk, .. } => {
+            Stmt::If {
+                then_blk, else_blk, ..
+            } => {
                 self.find_declared_vars(then_blk, declared);
                 if let Some(b) = else_blk {
                     self.find_declared_vars(b, declared);
@@ -738,7 +820,10 @@ impl Comp {
 
     fn undefined_var_error(&mut self, name: &str, pos: Pos) -> Result<(), Error> {
         let mut suggestions = Vec::new();
-        let all_names: Vec<&str> = self.locals.iter().map(|(n, _)| n.as_str())
+        let all_names: Vec<&str> = self
+            .locals
+            .iter()
+            .map(|(n, _)| n.as_str())
             .chain(self.free.iter().map(|(n, _)| n.as_str()))
             .chain(self.globals.keys().map(|s| s.as_str()))
             .chain(self.builtins.keys().map(|s| s.as_str()))
@@ -754,8 +839,11 @@ impl Comp {
         let msg = if suggestions.is_empty() {
             format!("undefined variable '{}'", name)
         } else {
-            format!("undefined variable '{}', did you mean {}?", 
-                name, suggestions.join(", "))
+            format!(
+                "undefined variable '{}', did you mean {}?",
+                name,
+                suggestions.join(", ")
+            )
         };
         Err(Error::Compile { pos, msg })
     }

@@ -3,16 +3,16 @@ use std::io::{self, BufRead, Write};
 use std::process;
 
 mod ast;
+mod compiler;
+mod error;
 mod lexer;
 mod parser;
-mod compiler;
 mod vm;
-mod error;
 
 use crate::compiler::Comp;
-use crate::parser::P;
-use crate::vm::{CompiledFunction, VM, Value};
 use crate::error::Error;
+use crate::parser::P;
+use crate::vm::{CompiledFunction, Value, VM};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -25,11 +25,11 @@ fn main() {
 
 fn run_cli(args: &[String]) {
     // Usage:
-    //   qwqlang <file.qwq>               -- interpret source file
-    //   qwqlang <file.qwqc>              -- run compiled bytecode
-    //   qwqlang -c <file.qwq> [out]      -- compile to bytecode
-    //   qwqlang compile <file.qwq> [out] -- compile to bytecode
-    //   qwqlang run <file.qwq|file.qwqc> -- interpret/run
+    //   qwq <file.qwq>               -- interpret source file
+    //   qwq <file.qwqc>              -- run compiled bytecode
+    //   qwq -c <file.qwq> [out]      -- compile to bytecode
+    //   qwq compile <file.qwq> [out] -- compile to bytecode
+    //   qwq run <file.qwq|file.qwqc> -- interpret/run
     match args[1].as_str() {
         "-c" | "--compile" | "compile" => {
             if args.len() < 3 {
@@ -127,7 +127,7 @@ fn run_repl() {
     let stdin = io::stdin();
 
     loop {
-        print!("qWQ> ");
+        print!("qwq> ");
         io::stdout().flush().unwrap();
 
         let line = stdin.lock().lines().next().unwrap().unwrap();

@@ -1,8 +1,8 @@
 use crate::compiler::Op;
 use crate::error::Error;
+use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -82,7 +82,10 @@ impl CompiledFunction {
         let num_free = read_u16_at(data, pos)?;
         let bc_len = read_u32_at(data, pos)? as usize;
         if *pos + bc_len > data.len() {
-            return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "bytecode truncated".to_string(),
+            });
         }
         let bytecode = data[*pos..*pos + bc_len].to_vec();
         *pos += bc_len;
@@ -103,7 +106,10 @@ impl CompiledFunction {
 
 fn read_u16_at(data: &[u8], pos: &mut usize) -> Result<u16, Error> {
     if *pos + 2 > data.len() {
-        return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+        return Err(Error::Runtime {
+            pos: None,
+            msg: "bytecode truncated".to_string(),
+        });
     }
     let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
     *pos += 2;
@@ -112,7 +118,10 @@ fn read_u16_at(data: &[u8], pos: &mut usize) -> Result<u16, Error> {
 
 fn read_u32_at(data: &[u8], pos: &mut usize) -> Result<u32, Error> {
     if *pos + 4 > data.len() {
-        return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+        return Err(Error::Runtime {
+            pos: None,
+            msg: "bytecode truncated".to_string(),
+        });
     }
     let v = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
@@ -155,7 +164,10 @@ impl Value {
 
     fn deserialize_from(data: &[u8], pos: &mut usize) -> Result<Self, Error> {
         if *pos >= data.len() {
-            return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "bytecode truncated".to_string(),
+            });
         }
         let tag = data[*pos];
         *pos += 1;
@@ -163,7 +175,10 @@ impl Value {
             0 => Ok(Value::Null),
             1 => {
                 if *pos >= data.len() {
-                    return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
                 }
                 let b = data[*pos] != 0;
                 *pos += 1;
@@ -171,7 +186,10 @@ impl Value {
             }
             2 => {
                 if *pos + 8 > data.len() {
-                    return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
                 }
                 let mut arr = [0u8; 8];
                 arr.copy_from_slice(&data[*pos..*pos + 8]);
@@ -181,10 +199,17 @@ impl Value {
             3 => {
                 let len = read_u32_at(data, pos)? as usize;
                 if *pos + len > data.len() {
-                    return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
                 }
-                let s = String::from_utf8(data[*pos..*pos + len].to_vec())
-                    .map_err(|_| Error::Runtime { pos: None, msg: "invalid utf-8 in string constant".to_string() })?;
+                let s = String::from_utf8(data[*pos..*pos + len].to_vec()).map_err(|_| {
+                    Error::Runtime {
+                        pos: None,
+                        msg: "invalid utf-8 in string constant".to_string(),
+                    }
+                })?;
                 *pos += len;
                 Ok(Value::Str(s))
             }
@@ -210,7 +235,7 @@ pub struct Closure {
 pub enum Upvalue {
     Open(usize),
     Closed(Value),
-    Global(usize),  // Index into VM's globals vector
+    Global(usize), // Index into VM's globals vector
 }
 
 #[derive(Debug)]
@@ -251,21 +276,21 @@ impl VM {
             bp: 0,
         });
         self.stack.resize(func.num_locals as usize, Value::Null);
-        
+
         loop {
             let frame_idx = self.call_stack.len() - 1;
             let ip = self.call_stack[frame_idx].ip;
             let closure = self.call_stack[frame_idx].closure.clone();
             let bp = self.call_stack[frame_idx].bp;
             let bytecode = closure.borrow().func.bytecode.clone();
-            
+
             if ip >= bytecode.len() {
                 let val = self.stack.pop().unwrap_or(Value::Null);
                 return Ok(val);
             }
-            
+
             let op = unsafe { std::mem::transmute::<u8, Op>(bytecode[ip]) };
-            
+
             match op {
                 Op::Constant => {
                     let idx = self.read_u16(&bytecode, ip + 1);
@@ -292,7 +317,12 @@ impl VM {
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Num(x + y),
                         (Value::Str(x), Value::Str(y)) => Value::Str(format!("{}{}", x, y)),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for +".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for +".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -302,7 +332,12 @@ impl VM {
                     let a = self.stack.pop().unwrap_or(Value::Null);
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Num(x - y),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for -".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for -".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -312,7 +347,12 @@ impl VM {
                     let a = self.stack.pop().unwrap_or(Value::Null);
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Num(x * y),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for *".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for *".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -323,11 +363,19 @@ impl VM {
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => {
                             if y == 0.0 {
-                                return Err(Error::Runtime { pos: None, msg: "division by zero".to_string() });
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: "division by zero".to_string(),
+                                });
                             }
                             Value::Num(x / y)
                         }
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for /".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for /".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -350,7 +398,12 @@ impl VM {
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Bool(x < y),
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x < y),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for <".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for <".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -361,7 +414,12 @@ impl VM {
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Bool(x > y),
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x > y),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for >".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for >".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -372,7 +430,12 @@ impl VM {
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Bool(x <= y),
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x <= y),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for <=".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for <=".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -383,7 +446,12 @@ impl VM {
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Bool(x >= y),
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x >= y),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operands for >=".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operands for >=".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -392,7 +460,12 @@ impl VM {
                     let a = self.stack.pop().unwrap_or(Value::Null);
                     let res = match a {
                         Value::Num(x) => Value::Num(-x),
-                        _ => return Err(Error::Runtime { pos: None, msg: "invalid operand for negation".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid operand for negation".to_string(),
+                            })
+                        }
                     };
                     self.stack.push(res);
                     self.call_stack[frame_idx].ip += 1;
@@ -404,7 +477,10 @@ impl VM {
                 Op::GetGlobal => {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     if idx as usize >= self.globals.len() {
-                        return Err(Error::Runtime { pos: None, msg: "undefined global variable".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "undefined global variable".to_string(),
+                        });
                     }
                     let val = self.globals[idx as usize].clone();
                     eprintln!("DEBUG GetGlobal: idx={}, val={:?}", idx, val);
@@ -424,9 +500,18 @@ impl VM {
                 Op::GetLocal => {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     let stack_idx = bp + idx as usize;
-                    eprintln!("DEBUG GetLocal: idx={}, bp={}, stack_idx={}, stack_len={}", idx, bp, stack_idx, self.stack.len());
+                    eprintln!(
+                        "DEBUG GetLocal: idx={}, bp={}, stack_idx={}, stack_len={}",
+                        idx,
+                        bp,
+                        stack_idx,
+                        self.stack.len()
+                    );
                     if stack_idx >= self.stack.len() {
-                        return Err(Error::Runtime { pos: None, msg: "invalid local index".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid local index".to_string(),
+                        });
                     }
                     self.stack.push(self.stack[stack_idx].clone());
                     self.call_stack[frame_idx].ip += 3;
@@ -436,7 +521,10 @@ impl VM {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     let stack_idx = bp + idx as usize;
                     if stack_idx >= self.stack.len() {
-                        return Err(Error::Runtime { pos: None, msg: "invalid local index".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid local index".to_string(),
+                        });
                     }
                     self.stack[stack_idx] = val;
                     self.call_stack[frame_idx].ip += 3;
@@ -446,7 +534,10 @@ impl VM {
                     let closure_clone = closure.clone();
                     let upvalues = &closure_clone.borrow().upvalues;
                     if idx as usize >= upvalues.len() {
-                        return Err(Error::Runtime { pos: None, msg: "invalid free variable index".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid free variable index".to_string(),
+                        });
                     }
                     let val = match &upvalues[idx as usize] {
                         Upvalue::Open(slot) => self.stack[*slot].clone(),
@@ -463,7 +554,10 @@ impl VM {
                     let mut closure_mut = closure_clone.borrow_mut();
                     let upvalues = &mut closure_mut.upvalues;
                     if idx as usize >= upvalues.len() {
-                        return Err(Error::Runtime { pos: None, msg: "invalid free variable index".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid free variable index".to_string(),
+                        });
                     }
                     match &mut upvalues[idx as usize] {
                         Upvalue::Open(slot) => {
@@ -521,7 +615,12 @@ impl VM {
                     let constants = &closure.borrow().func.constants;
                     let func = match &constants[func_idx as usize] {
                         Value::Func(f) => f.clone(),
-                        _ => return Err(Error::Runtime { pos: None, msg: "expected function in constant pool".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "expected function in constant pool".to_string(),
+                            })
+                        }
                     };
                     let mut upvalues = Vec::new();
                     // Pop captured values from the stack
@@ -548,7 +647,10 @@ impl VM {
                     eprintln!("DEBUG: Call - stack: {:?}", self.stack);
                     let callee_idx = self.stack.len() - num_args as usize - 1;
                     if callee_idx >= self.stack.len() {
-                        return Err(Error::Runtime { pos: None, msg: "stack underflow".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "stack underflow".to_string(),
+                        });
                     }
                     let callee = self.stack.remove(callee_idx);
                     eprintln!("DEBUG: Call - callee: {:?}", callee);
@@ -556,13 +658,17 @@ impl VM {
                         Value::Closure(closure) => {
                             let func = &closure.borrow().func;
                             if func.num_params != num_args {
-                                return Err(Error::Runtime { 
-                                    pos: None, 
-                                    msg: format!("expected {} arguments, got {}", func.num_params, num_args) 
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: format!(
+                                        "expected {} arguments, got {}",
+                                        func.num_params, num_args
+                                    ),
                                 });
                             }
                             let new_bp = self.stack.len() - num_args as usize;
-                            self.stack.resize(new_bp + (func.num_locals as usize), Value::Null);
+                            self.stack
+                                .resize(new_bp + (func.num_locals as usize), Value::Null);
                             self.call_stack.push(Frame {
                                 closure: closure.clone(),
                                 ip: 0,
@@ -571,9 +677,12 @@ impl VM {
                         }
                         Value::Func(func) => {
                             if func.num_params != num_args {
-                                return Err(Error::Runtime { 
-                                    pos: None, 
-                                    msg: format!("expected {} arguments, got {}", func.num_params, num_args) 
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: format!(
+                                        "expected {} arguments, got {}",
+                                        func.num_params, num_args
+                                    ),
                                 });
                             }
                             let closure = Rc::new(RefCell::new(Closure {
@@ -581,7 +690,8 @@ impl VM {
                                 upvalues: Vec::new(),
                             }));
                             let new_bp = self.stack.len() - num_args as usize;
-                            self.stack.resize(new_bp + (func.num_locals as usize), Value::Null);
+                            self.stack
+                                .resize(new_bp + (func.num_locals as usize), Value::Null);
                             self.call_stack.push(Frame {
                                 closure: closure.clone(),
                                 ip: 0,
@@ -591,7 +701,12 @@ impl VM {
                         Value::Builtin(f) => {
                             f(self)?;
                         }
-                        _ => return Err(Error::Runtime { pos: None, msg: "cannot call non-function".to_string() }),
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "cannot call non-function".to_string(),
+                            })
+                        }
                     }
                     self.call_stack[frame_idx].ip += 3;
                 }
@@ -608,7 +723,10 @@ impl VM {
                 Op::GetBuiltin => {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     if idx as usize >= self.globals.len() {
-                        return Err(Error::Runtime { pos: None, msg: "invalid builtin index".to_string() });
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid builtin index".to_string(),
+                        });
                     }
                     self.stack.push(self.globals[idx as usize].clone());
                     self.call_stack[frame_idx].ip += 3;

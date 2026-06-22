@@ -8,9 +8,21 @@ pub struct Pos {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Let { name: String, init: Expr, pos: Pos },
-    Mut { name: String, init: Expr, pos: Pos },
-    Assign { name: String, value: Expr, pos: Pos },
+    Let {
+        name: String,
+        init: Expr,
+        pos: Pos,
+    },
+    Mut {
+        name: String,
+        init: Expr,
+        pos: Pos,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+        pos: Pos,
+    },
     Block(Vec<Stmt>),
     If {
         cond: Expr,
@@ -28,7 +40,10 @@ pub enum Stmt {
         value: Option<Expr>,
         pos: Pos,
     },
-    Return { value: Option<Expr>, pos: Pos },
+    Return {
+        value: Option<Expr>,
+        pos: Pos,
+    },
     Expr(Expr),
 }
 
@@ -45,8 +60,16 @@ pub enum Expr {
         right: Box<Expr>,
         pos: Pos,
     },
-    UnaryOp { op: UnaryOp, expr: Box<Expr>, pos: Pos },
-    Call { callee: Box<Expr>, args: Vec<Expr>, pos: Pos },
+    UnaryOp {
+        op: UnaryOp,
+        expr: Box<Expr>,
+        pos: Pos,
+    },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        pos: Pos,
+    },
     Func {
         params: Vec<String>,
         captures: Vec<String>,
@@ -69,9 +92,18 @@ pub enum Expr {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div,
-    Eq, Neq, Lt, Gt, Lte, Gte,
-    And, Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Lte,
+    Gte,
+    And,
+    Or,
     Assign,
 }
 

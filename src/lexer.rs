@@ -1,6 +1,6 @@
+use crate::ast::Pos;
 use std::iter::Peekable;
 use std::str::Chars;
-use crate::ast::Pos;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
@@ -69,11 +69,23 @@ impl<'a> Lex<'a> {
                     let pos = self.pos();
                     match c {
                         ' ' | '\t' => self.col += 1,
-                        '\n' => { self.line += 1; self.col = 1; }
+                        '\n' => {
+                            self.line += 1;
+                            self.col = 1;
+                        }
                         '\r' => {}
-                        '+' => { self.col += 1; return Tok::Add(pos); }
-                        '-' => { self.col += 1; return Tok::Sub(pos); }
-                        '*' => { self.col += 1; return Tok::Mul(pos); }
+                        '+' => {
+                            self.col += 1;
+                            return Tok::Add(pos);
+                        }
+                        '-' => {
+                            self.col += 1;
+                            return Tok::Sub(pos);
+                        }
+                        '*' => {
+                            self.col += 1;
+                            return Tok::Mul(pos);
+                        }
                         '/' => {
                             self.col += 1;
                             if let Some(&'/') = self.chars.peek() {
@@ -133,14 +145,38 @@ impl<'a> Lex<'a> {
                             }
                             return Tok::PipeSingle(pos);
                         }
-                        '(' => { self.col += 1; return Tok::LParen(pos); }
-                        ')' => { self.col += 1; return Tok::RParen(pos); }
-                        '{' => { self.col += 1; return Tok::LBrace(pos); }
-                        '}' => { self.col += 1; return Tok::RBrace(pos); }
-                        ';' => { self.col += 1; return Tok::Semicolon(pos); }
-                        ',' => { self.col += 1; return Tok::Comma(pos); }
-                        '[' => { self.col += 1; return Tok::LBracket(pos); }
-                        ']' => { self.col += 1; return Tok::RBracket(pos); }
+                        '(' => {
+                            self.col += 1;
+                            return Tok::LParen(pos);
+                        }
+                        ')' => {
+                            self.col += 1;
+                            return Tok::RParen(pos);
+                        }
+                        '{' => {
+                            self.col += 1;
+                            return Tok::LBrace(pos);
+                        }
+                        '}' => {
+                            self.col += 1;
+                            return Tok::RBrace(pos);
+                        }
+                        ';' => {
+                            self.col += 1;
+                            return Tok::Semicolon(pos);
+                        }
+                        ',' => {
+                            self.col += 1;
+                            return Tok::Comma(pos);
+                        }
+                        '[' => {
+                            self.col += 1;
+                            return Tok::LBracket(pos);
+                        }
+                        ']' => {
+                            self.col += 1;
+                            return Tok::RBracket(pos);
+                        }
                         '\'' => {
                             self.col += 1;
                             let label = self.identifier();
@@ -193,7 +229,10 @@ impl<'a> Lex<'a> {
     }
 
     fn pos(&self) -> Pos {
-        Pos { line: self.line, col: self.col }
+        Pos {
+            line: self.line,
+            col: self.col,
+        }
     }
 
     fn skip_line(&mut self) {
@@ -219,14 +258,19 @@ impl<'a> Lex<'a> {
                     depth -= 1;
                     self.col += 2;
                     self.chars.next();
-                    if depth == 0 { break; }
+                    if depth == 0 {
+                        break;
+                    }
                 }
                 '/' if self.chars.peek() == Some(&'*') => {
                     depth += 1;
                     self.col += 2;
                     self.chars.next();
                 }
-                '\n' => { self.line += 1; self.col = 1; }
+                '\n' => {
+                    self.line += 1;
+                    self.col = 1;
+                }
                 _ => self.col += 1,
             }
         }
@@ -273,8 +317,15 @@ impl<'a> Lex<'a> {
                         }
                     }
                 }
-                '\n' => { self.line += 1; self.col = 1; s.push('\n'); }
-                _ => { s.push(c); self.col += 1; }
+                '\n' => {
+                    self.line += 1;
+                    self.col = 1;
+                    s.push('\n');
+                }
+                _ => {
+                    s.push(c);
+                    self.col += 1;
+                }
             }
         }
         s

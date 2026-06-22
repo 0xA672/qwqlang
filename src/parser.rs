@@ -1,6 +1,6 @@
 use crate::ast::{BinOp, Expr, Pos, Stmt, UnaryOp};
-use crate::lexer::{Lex, Tok};
 use crate::error::Error;
+use crate::lexer::{Lex, Tok};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -125,10 +125,15 @@ impl<'a> P<'a> {
         }
         let body = Box::new(self.block()?);
         self.consume_semicolon()?;
-        Ok(Stmt::Let { 
-            name, 
-            init: Expr::Func { params, captures, body, pos }, 
-            pos 
+        Ok(Stmt::Let {
+            name,
+            init: Expr::Func {
+                params,
+                captures,
+                body,
+                pos,
+            },
+            pos,
         })
     }
 
@@ -144,7 +149,12 @@ impl<'a> P<'a> {
         } else {
             None
         };
-        Ok(Stmt::If { cond, then_blk, else_blk, pos })
+        Ok(Stmt::If {
+            cond,
+            then_blk,
+            else_blk,
+            pos,
+        })
     }
 
     fn label_loop(&mut self, name: &str, pos: Pos) -> Result<Stmt, Error> {
@@ -154,7 +164,11 @@ impl<'a> P<'a> {
         self.loop_stack.push(Some(name.to_string()));
         let body = Box::new(self.block()?);
         self.loop_stack.pop();
-        Ok(Stmt::Loop { label: Some(name.to_string()), body, pos })
+        Ok(Stmt::Loop {
+            label: Some(name.to_string()),
+            body,
+            pos,
+        })
     }
 
     fn loop_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
@@ -162,7 +176,11 @@ impl<'a> P<'a> {
         self.loop_stack.push(None);
         let body = Box::new(self.block()?);
         self.loop_stack.pop();
-        Ok(Stmt::Loop { label: None, body, pos })
+        Ok(Stmt::Loop {
+            label: None,
+            body,
+            pos,
+        })
     }
 
     fn break_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
@@ -286,14 +304,18 @@ impl<'a> P<'a> {
     fn has_placeholder(&self, e: &Expr) -> bool {
         match e {
             Expr::Ident(name, _) => name == "_",
-            Expr::BinOp { left, right, .. } => self.has_placeholder(left) || self.has_placeholder(right),
+            Expr::BinOp { left, right, .. } => {
+                self.has_placeholder(left) || self.has_placeholder(right)
+            }
             Expr::UnaryOp { expr, .. } => self.has_placeholder(expr),
             Expr::Call { callee, args, .. } => {
                 self.has_placeholder(callee) || args.iter().any(|a| self.has_placeholder(a))
             }
             Expr::Func { body, .. } => self.has_placeholder_in_stmt(body),
             Expr::Arrow { body, .. } => self.has_placeholder(body),
-            Expr::Pipe { left, right, .. } => self.has_placeholder(left) || self.has_placeholder(right),
+            Expr::Pipe { left, right, .. } => {
+                self.has_placeholder(left) || self.has_placeholder(right)
+            }
             _ => false,
         }
     }
@@ -304,9 +326,17 @@ impl<'a> P<'a> {
             Stmt::Mut { init, .. } => self.has_placeholder(init),
             Stmt::Assign { value, .. } => self.has_placeholder(value),
             Stmt::Block(stmts) => stmts.iter().any(|s| self.has_placeholder_in_stmt(s)),
-            Stmt::If { cond, then_blk, else_blk, .. } => {
-                self.has_placeholder(cond) || self.has_placeholder_in_stmt(then_blk) || 
-                else_blk.as_ref().map_or(false, |b| self.has_placeholder_in_stmt(b))
+            Stmt::If {
+                cond,
+                then_blk,
+                else_blk,
+                ..
+            } => {
+                self.has_placeholder(cond)
+                    || self.has_placeholder_in_stmt(then_blk)
+                    || else_blk
+                        .as_ref()
+                        .map_or(false, |b| self.has_placeholder_in_stmt(b))
             }
             Stmt::Loop { body, .. } => self.has_placeholder_in_stmt(body),
             Stmt::Break { value, .. } => value.as_ref().map_or(false, |v| self.has_placeholder(v)),
@@ -323,12 +353,22 @@ impl<'a> P<'a> {
                 Tok::Eq(pos) => {
                     self.consume();
                     let right = self.comparison()?;
-                    left = Expr::BinOp { op: BinOp::Eq, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Eq,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 Tok::Neq(pos) => {
                     self.consume();
                     let right = self.comparison()?;
-                    left = Expr::BinOp { op: BinOp::Neq, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Neq,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 _ => break,
             }
@@ -344,22 +384,42 @@ impl<'a> P<'a> {
                 Tok::Lt(pos) => {
                     self.consume();
                     let right = self.additive()?;
-                    left = Expr::BinOp { op: BinOp::Lt, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Lt,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 Tok::Gt(pos) => {
                     self.consume();
                     let right = self.additive()?;
-                    left = Expr::BinOp { op: BinOp::Gt, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Gt,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 Tok::Lte(pos) => {
                     self.consume();
                     let right = self.additive()?;
-                    left = Expr::BinOp { op: BinOp::Lte, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Lte,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 Tok::Gte(pos) => {
                     self.consume();
                     let right = self.additive()?;
-                    left = Expr::BinOp { op: BinOp::Gte, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Gte,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 _ => break,
             }
@@ -375,12 +435,22 @@ impl<'a> P<'a> {
                 Tok::Add(pos) => {
                     self.consume();
                     let right = self.multiplicative()?;
-                    left = Expr::BinOp { op: BinOp::Add, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Add,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 Tok::Sub(pos) => {
                     self.consume();
                     let right = self.multiplicative()?;
-                    left = Expr::BinOp { op: BinOp::Sub, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Sub,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 _ => break,
             }
@@ -396,12 +466,22 @@ impl<'a> P<'a> {
                 Tok::Mul(pos) => {
                     self.consume();
                     let right = self.unary()?;
-                    left = Expr::BinOp { op: BinOp::Mul, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Mul,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 Tok::Div(pos) => {
                     self.consume();
                     let right = self.unary()?;
-                    left = Expr::BinOp { op: BinOp::Div, left: Box::new(left), right: Box::new(right), pos };
+                    left = Expr::BinOp {
+                        op: BinOp::Div,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        pos,
+                    };
                 }
                 _ => break,
             }
@@ -415,7 +495,11 @@ impl<'a> P<'a> {
             Tok::Sub(pos) => {
                 self.consume();
                 let expr = self.unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Neg, expr: Box::new(expr), pos })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(expr),
+                    pos,
+                })
             }
             _ => self.call(),
         }
@@ -436,7 +520,11 @@ impl<'a> P<'a> {
                     }
                 }
                 self.expect_rparen()?;
-                callee = Expr::Call { callee: Box::new(callee), args, pos };
+                callee = Expr::Call {
+                    callee: Box::new(callee),
+                    args,
+                    pos,
+                };
             } else {
                 break;
             }
@@ -447,12 +535,30 @@ impl<'a> P<'a> {
     fn primary(&mut self) -> Result<Expr, Error> {
         let tok = self.cur.clone();
         match tok {
-            Tok::Null(pos) => { self.consume(); Ok(Expr::Null(pos)) }
-            Tok::True(pos) => { self.consume(); Ok(Expr::Bool(true, pos)) }
-            Tok::False(pos) => { self.consume(); Ok(Expr::Bool(false, pos)) }
-            Tok::Num(n, pos) => { self.consume(); Ok(Expr::Num(n, pos)) }
-            Tok::Str(s, pos) => { self.consume(); Ok(Expr::Str(s, pos)) }
-            Tok::Ident(name, pos) => { self.consume(); Ok(Expr::Ident(name, pos)) }
+            Tok::Null(pos) => {
+                self.consume();
+                Ok(Expr::Null(pos))
+            }
+            Tok::True(pos) => {
+                self.consume();
+                Ok(Expr::Bool(true, pos))
+            }
+            Tok::False(pos) => {
+                self.consume();
+                Ok(Expr::Bool(false, pos))
+            }
+            Tok::Num(n, pos) => {
+                self.consume();
+                Ok(Expr::Num(n, pos))
+            }
+            Tok::Str(s, pos) => {
+                self.consume();
+                Ok(Expr::Str(s, pos))
+            }
+            Tok::Ident(name, pos) => {
+                self.consume();
+                Ok(Expr::Ident(name, pos))
+            }
             Tok::LParen(_) => {
                 self.consume();
                 let e = self.expr()?;
@@ -494,7 +600,12 @@ impl<'a> P<'a> {
             self.expect_rbracket()?;
         }
         let body = Box::new(self.block()?);
-        Ok(Expr::Func { params, captures, body, pos })
+        Ok(Expr::Func {
+            params,
+            captures,
+            body,
+            pos,
+        })
     }
 
     fn parse_capture(&mut self) -> Result<String, Error> {
@@ -536,7 +647,12 @@ impl<'a> P<'a> {
             let expr = self.expr()?;
             (Box::new(expr), false)
         };
-        Ok(Expr::Arrow { params, body, is_block, pos })
+        Ok(Expr::Arrow {
+            params,
+            body,
+            is_block,
+            pos,
+        })
     }
 
     fn consume(&mut self) {
@@ -644,15 +760,45 @@ impl<'a> P<'a> {
 
     fn pos(&self) -> Pos {
         match &self.cur {
-            Tok::Let(p) | Tok::Mut(p) | Tok::Fn(p) | Tok::If(p) | Tok::Else(p) |
-            Tok::True(p) | Tok::False(p) | Tok::Null(p) | Tok::Return(p) | Tok::And(p) |
-            Tok::Or(p) | Tok::Loop(p) | Tok::Break(p) | Tok::Ident(_, p) | Tok::Label(_, p) |
-            Tok::Num(_, p) | Tok::Str(_, p) | Tok::Add(p) | Tok::Sub(p) | Tok::Mul(p) |
-            Tok::Div(p) | Tok::Eq(p) | Tok::Neq(p) | Tok::Lt(p) | Tok::Gt(p) |
-            Tok::Lte(p) | Tok::Gte(p) | Tok::Assign(p) | Tok::Pipe(p) | Tok::PipeSingle(p) |
-            Tok::LParen(p) | Tok::RParen(p) | Tok::LBrace(p) | Tok::RBrace(p) |
-            Tok::Semicolon(p) | Tok::Comma(p) | Tok::LBracket(p) | Tok::RBracket(p) |
-            Tok::Eof(p) => *p,
+            Tok::Let(p)
+            | Tok::Mut(p)
+            | Tok::Fn(p)
+            | Tok::If(p)
+            | Tok::Else(p)
+            | Tok::True(p)
+            | Tok::False(p)
+            | Tok::Null(p)
+            | Tok::Return(p)
+            | Tok::And(p)
+            | Tok::Or(p)
+            | Tok::Loop(p)
+            | Tok::Break(p)
+            | Tok::Ident(_, p)
+            | Tok::Label(_, p)
+            | Tok::Num(_, p)
+            | Tok::Str(_, p)
+            | Tok::Add(p)
+            | Tok::Sub(p)
+            | Tok::Mul(p)
+            | Tok::Div(p)
+            | Tok::Eq(p)
+            | Tok::Neq(p)
+            | Tok::Lt(p)
+            | Tok::Gt(p)
+            | Tok::Lte(p)
+            | Tok::Gte(p)
+            | Tok::Assign(p)
+            | Tok::Pipe(p)
+            | Tok::PipeSingle(p)
+            | Tok::LParen(p)
+            | Tok::RParen(p)
+            | Tok::LBrace(p)
+            | Tok::RBrace(p)
+            | Tok::Semicolon(p)
+            | Tok::Comma(p)
+            | Tok::LBracket(p)
+            | Tok::RBracket(p)
+            | Tok::Eof(p) => *p,
         }
     }
 }
@@ -664,9 +810,17 @@ trait ExprPos {
 impl ExprPos for Expr {
     fn pos(&self) -> Pos {
         match self {
-            Expr::Null(p) | Expr::Bool(_, p) | Expr::Num(_, p) | Expr::Str(_, p) | Expr::Ident(_, p) => *p,
-            Expr::BinOp { pos, .. } | Expr::UnaryOp { pos, .. } | Expr::Call { pos, .. } |
-            Expr::Func { pos, .. } | Expr::Arrow { pos, .. } | Expr::Pipe { pos, .. } => *pos,
+            Expr::Null(p)
+            | Expr::Bool(_, p)
+            | Expr::Num(_, p)
+            | Expr::Str(_, p)
+            | Expr::Ident(_, p) => *p,
+            Expr::BinOp { pos, .. }
+            | Expr::UnaryOp { pos, .. }
+            | Expr::Call { pos, .. }
+            | Expr::Func { pos, .. }
+            | Expr::Arrow { pos, .. }
+            | Expr::Pipe { pos, .. } => *pos,
         }
     }
 }
