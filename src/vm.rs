@@ -38,20 +38,17 @@ impl CompiledFunction {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"QWQBC");
-        buf.push(1); // version
+        buf.push(1);
         self.serialize_into(&mut buf);
         buf
     }
 
     fn serialize_into(&self, buf: &mut Vec<u8>) {
-        // num_locals, num_params, num_free
         buf.extend_from_slice(&self.num_locals.to_le_bytes());
         buf.extend_from_slice(&self.num_params.to_le_bytes());
         buf.extend_from_slice(&self.num_free.to_le_bytes());
-        // bytecode
         buf.extend_from_slice(&(self.bytecode.len() as u32).to_le_bytes());
         buf.extend_from_slice(&self.bytecode);
-        // constants
         buf.extend_from_slice(&(self.constants.len() as u32).to_le_bytes());
         for c in &self.constants {
             c.serialize_into(buf);
@@ -153,7 +150,6 @@ impl Value {
                 f.serialize_into(buf);
             }
             Value::Closure(_) => {
-                // Closures cannot be serialized; write as null.
                 buf.push(0);
             }
             Value::Builtin(_) => {
@@ -235,7 +231,7 @@ pub struct Closure {
 pub enum Upvalue {
     Open(usize),
     Closed(Value),
-    Global(usize), // Index into VM's globals vector
+    Global(usize),
 }
 
 #[derive(Debug)]
@@ -313,6 +309,7 @@ impl VM {
                 Op::Add => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
                     let a = self.stack.pop().unwrap_or(Value::Null);
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG Add: a={:?}, b={:?}, stack={:?}", a, b, self.stack);
                     let res = match (a, b) {
                         (Value::Num(x), Value::Num(y)) => Value::Num(x + y),
@@ -483,6 +480,7 @@ impl VM {
                         });
                     }
                     let val = self.globals[idx as usize].clone();
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG GetGlobal: idx={}, val={:?}", idx, val);
                     self.stack.push(val);
                     self.call_stack[frame_idx].ip += 3;
@@ -490,6 +488,7 @@ impl VM {
                 Op::SetGlobal => {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     let val = self.stack.pop().unwrap_or(Value::Null);
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG SetGlobal: idx={}, val={:?}", idx, val);
                     if idx as usize >= self.globals.len() {
                         self.globals.resize((idx + 1) as usize, Value::Null);
@@ -500,6 +499,7 @@ impl VM {
                 Op::GetLocal => {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     let stack_idx = bp + idx as usize;
+                    #[cfg(debug_assertions)]
                     eprintln!(
                         "DEBUG GetLocal: idx={}, bp={}, stack_idx={}, stack_len={}",
                         idx,
@@ -580,10 +580,8 @@ impl VM {
                     let cond = self.stack.last().unwrap_or(&Value::Null).clone();
                     let offset = self.read_i16(&bytecode, ip + 1);
                     if !self.is_truthy(&cond) {
-                        // Keep the value on stack for short-circuit result
                         self.call_stack[frame_idx].ip = ((ip as i16) + offset) as usize;
                     } else {
-                        // Pop the value - condition is true, continue
                         self.stack.pop();
                         self.call_stack[frame_idx].ip += 3;
                     }
@@ -592,10 +590,8 @@ impl VM {
                     let cond = self.stack.last().unwrap_or(&Value::Null).clone();
                     let offset = self.read_i16(&bytecode, ip + 1);
                     if self.is_truthy(&cond) {
-                        // Keep the value on stack for short-circuit result
                         self.call_stack[frame_idx].ip = ((ip as i16) + offset) as usize;
                     } else {
-                        // Pop the value - condition is false, continue
                         self.stack.pop();
                         self.call_stack[frame_idx].ip += 3;
                     }
@@ -623,12 +619,9 @@ impl VM {
                         }
                     };
                     let mut upvalues = Vec::new();
-                    // Pop captured values from the stack
                     for _ in 0..num_free {
                         let val = self.stack.pop().unwrap_or(Value::Null);
                         match val {
-                            // If it's a number, check if it's a global capture marker
-                            // We use a special encoding: negative numbers represent global indices
                             Value::Num(n) if n < 0.0 => {
                                 let global_idx = (-n - 1.0) as usize;
                                 upvalues.insert(0, Upvalue::Global(global_idx));
@@ -644,6 +637,7 @@ impl VM {
                 }
                 Op::Call => {
                     let num_args = self.read_u16(&bytecode, ip + 1);
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG: Call - stack: {:?}", self.stack);
                     let callee_idx = self.stack.len() - num_args as usize - 1;
                     if callee_idx >= self.stack.len() {
@@ -653,6 +647,7 @@ impl VM {
                         });
                     }
                     let callee = self.stack.remove(callee_idx);
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG: Call - callee: {:?}", callee);
                     match callee {
                         Value::Closure(closure) => {
@@ -718,7 +713,6 @@ impl VM {
                         return Ok(val);
                     }
                     self.stack.push(val);
-                    // Don't increment ip here - Call already did it
                 }
                 Op::GetBuiltin => {
                     let idx = self.read_u16(&bytecode, ip + 1);
@@ -733,8 +727,6 @@ impl VM {
                 }
                 Op::CaptureGlobal => {
                     let idx = self.read_u16(&bytecode, ip + 1);
-                    // Push a marker value that indicates this is a global capture
-                    // We use negative numbers to encode the global index
                     self.stack.push(Value::Num(-(idx as f64 + 1.0)));
                     self.call_stack[frame_idx].ip += 3;
                 }

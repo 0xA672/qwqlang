@@ -36,14 +36,14 @@ pub enum Op {
     Call = 25,
     Return = 26,
     GetBuiltin = 27,
-    CaptureGlobal = 30, // Capture a global variable by reference
+    CaptureGlobal = 30,
 }
 
 #[derive(Debug)]
 pub struct Comp {
     bytecode: Vec<u8>,
     constants: Vec<Value>,
-    globals: HashMap<String, (usize, bool)>, // (index, is_mutable)
+    globals: HashMap<String, (usize, bool)>,
     builtins: HashMap<String, usize>,
     locals: Vec<(String, bool)>,
     free: Vec<(String, bool)>,
@@ -84,8 +84,11 @@ impl Comp {
         }
         self.emit_op(Op::Return);
 
-        eprintln!("DEBUG: bytecode = {:?}", self.bytecode);
-        eprintln!("DEBUG: constants = {:?}", self.constants);
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("DEBUG: bytecode = {:?}", self.bytecode);
+            eprintln!("DEBUG: constants = {:?}", self.constants);
+        }
 
         Ok(CompiledFunction {
             bytecode: self.bytecode.clone(),
@@ -99,7 +102,6 @@ impl Comp {
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), Error> {
         match stmt {
             Stmt::Let { name, init, pos } => {
-                // Pre-register function name in globals to allow recursion
                 if self.func_stack.is_empty() && matches!(init, Expr::Func { .. }) {
                     if !self.globals.contains_key(name) {
                         let idx = self.next_global;
@@ -218,29 +220,23 @@ impl Comp {
                 self.emit_op(Op::Jump);
                 let offset = loop_start as i16 - jump_pos as i16;
                 self.emit_i16(offset);
-                // Emit Pop/Null to clean up the body's value and push Null as loop result.
-                // This code is only reached when the loop exits naturally (not via break),
-                // so break jumps must target past this code.
                 let pre_cleanup_len = self.bytecode.len();
                 self.emit_op(Op::Pop);
                 self.emit_op(Op::Null);
                 let loop_end = self.bytecode.len();
 
-                // Patch each break jump individually based on whether it has a value
                 let mut any_break_has_value = false;
                 if let Some((_, _, break_positions)) = self.loop_stack.last() {
                     let break_positions = break_positions.clone();
                     for (pos, has_value) in &break_positions {
                         if *has_value {
                             any_break_has_value = true;
-                            // Break with value: skip Pop/Null, leave value on stack
                             let target = loop_end as i16;
                             let jump_instr_pos = (*pos - 1) as i16;
                             let offset = target - jump_instr_pos;
                             self.bytecode[*pos] = (offset & 0xff) as u8;
                             self.bytecode[*pos + 1] = ((offset >> 8) & 0xff) as u8;
                         } else {
-                            // Break without value: go through Pop/Null to push Null
                             let target = pre_cleanup_len as i16;
                             let jump_instr_pos = (*pos - 1) as i16;
                             let offset = target - jump_instr_pos;
@@ -252,7 +248,6 @@ impl Comp {
 
                 self.loop_stack.pop();
 
-                // If any break has a value, remove the Pop+Null we emitted
                 if any_break_has_value {
                     self.bytecode.truncate(pre_cleanup_len);
                 }
@@ -278,15 +273,13 @@ impl Comp {
 
                 let has_value = value.is_some();
 
-                // If break has a value, push it onto the stack
                 if let Some(value) = value {
                     self.expr(value)?;
                 }
 
-                // Record break position for patching later, along with value flag
                 self.emit_op(Op::Jump);
                 let break_pos = self.bytecode.len();
-                self.emit_i16(0); // Placeholder - will be patched
+                self.emit_i16(0);
                 self.loop_stack[loop_idx].2.push((break_pos, has_value));
             }
             Stmt::Return { value, .. } => {
@@ -325,11 +318,15 @@ impl Comp {
                 self.emit_u16(idx as u16);
             }
             Expr::Ident(name, pos) => {
-                eprintln!(
-                    "DEBUG Ident: name={}, locals={:?}, globals={:?}",
-                    name, self.locals, self.globals
-                );
+                #[cfg(debug_assertions)]
+                {
+                    eprintln!(
+                        "DEBUG Ident: name={}, locals={:?}, globals={:?}",
+                        name, self.locals, self.globals
+                    );
+                }
                 if let Some(idx) = self.locals.iter().position(|(n, _)| n == name) {
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG Ident: using GetLocal idx={}", idx);
                     self.emit_op(Op::GetLocal);
                     self.emit_u16(idx as u16);
@@ -337,10 +334,10 @@ impl Comp {
                     self.emit_op(Op::GetFree);
                     self.emit_u16(idx as u16);
                 } else if let Some(&idx) = self.builtins.get(name) {
-                    let idx = idx;
                     self.emit_op(Op::GetBuiltin);
                     self.emit_u16(idx as u16);
                 } else if let Some(&(idx, _)) = self.globals.get(name) {
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG Ident: using GetGlobal idx={}", idx);
                     self.emit_op(Op::GetGlobal);
                     self.emit_u16(idx as u16);
@@ -434,6 +431,7 @@ impl Comp {
                 ..
             } => {
                 if *has_placeholder {
+                    #[cfg(debug_assertions)]
                     eprintln!("DEBUG: Compiling pipe with placeholder");
                     let right_expr = (**right).clone();
                     let body_stmt = Stmt::Block(vec![Stmt::Return {
@@ -501,7 +499,6 @@ impl Comp {
         let mut vars_used = HashSet::new();
         self.find_used_vars(body, &mut vars_used);
 
-        // Collect locally-declared variables to avoid treating them as free variables
         let mut declared = HashSet::new();
         self.find_declared_vars(body, &mut declared);
 
@@ -557,10 +554,8 @@ impl Comp {
 
         let func_idx = self.add_constant(Value::Func(func));
 
-        // Emit instructions to push captured values onto the stack
         let free_vars = self.free.clone();
         for (name, _is_mut) in &free_vars {
-            // Find the variable in the enclosing scope and push its value
             if let Some(idx) = saved_locals.iter().position(|(n, _)| n == name) {
                 self.emit_op(Op::GetLocal);
                 self.emit_u16(idx as u16);
@@ -568,7 +563,6 @@ impl Comp {
                 self.emit_op(Op::GetFree);
                 self.emit_u16(idx as u16);
             } else if let Some(&(idx, _)) = self.globals.get(name) {
-                // Use CaptureGlobal to capture by reference
                 self.emit_op(Op::CaptureGlobal);
                 self.emit_u16(idx as u16);
             }
@@ -599,14 +593,12 @@ impl Comp {
         if let Some((_, is_mut)) = free.iter().find(|(n, _)| n == name) {
             return Some((*is_mut, false));
         }
-        // Check globals with their actual mutability
         if let Some(&(_, is_mut)) = self.globals.get(name) {
             return Some((is_mut, false));
         }
         None
     }
 
-    /// Verify that the named variable is mutable. Returns an error if it is immutable.
     fn check_mutability(&self, name: &str, pos: Pos) -> Result<(), Error> {
         if let Some((_, is_mut)) = self.locals.iter().find(|(n, _)| n == name) {
             if !is_mut {
@@ -642,11 +634,9 @@ impl Comp {
         match stmt {
             Stmt::Let { init, .. } => {
                 self.find_used_vars_in_expr(init, vars);
-                // Do NOT add `name` to vars - it's being declared, not used
             }
             Stmt::Mut { init, .. } => {
                 self.find_used_vars_in_expr(init, vars);
-                // Do NOT add `name` to vars - it's being declared, not used
             }
             Stmt::Assign { value, .. } => {
                 self.find_used_vars_in_expr(value, vars);
@@ -720,8 +710,6 @@ impl Comp {
         }
     }
 
-    /// Collect all locally-declared variable names in the function body.
-    /// These are variables declared via `let`, `mut`, or `fn` (which desugars to let).
     fn find_declared_vars(&self, stmt: &Stmt, declared: &mut HashSet<String>) {
         match stmt {
             Stmt::Let { name, .. } => {
