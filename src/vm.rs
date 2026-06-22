@@ -34,6 +34,170 @@ impl CompiledFunction {
             num_free: 0,
         }
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"QWQBC");
+        buf.push(1); // version
+        self.serialize_into(&mut buf);
+        buf
+    }
+
+    fn serialize_into(&self, buf: &mut Vec<u8>) {
+        // num_locals, num_params, num_free
+        buf.extend_from_slice(&self.num_locals.to_le_bytes());
+        buf.extend_from_slice(&self.num_params.to_le_bytes());
+        buf.extend_from_slice(&self.num_free.to_le_bytes());
+        // bytecode
+        buf.extend_from_slice(&(self.bytecode.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&self.bytecode);
+        // constants
+        buf.extend_from_slice(&(self.constants.len() as u32).to_le_bytes());
+        for c in &self.constants {
+            c.serialize_into(buf);
+        }
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self, Error> {
+        if data.len() < 6 || &data[..5] != b"QWQBC" {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "invalid bytecode file (bad magic)".to_string(),
+            });
+        }
+        let version = data[5];
+        if version != 1 {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: format!("unsupported bytecode version: {}", version),
+            });
+        }
+        let mut pos = 6;
+        Self::deserialize_from(data, &mut pos)
+    }
+
+    fn deserialize_from(data: &[u8], pos: &mut usize) -> Result<Self, Error> {
+        let num_locals = read_u16_at(data, pos)?;
+        let num_params = read_u16_at(data, pos)?;
+        let num_free = read_u16_at(data, pos)?;
+        let bc_len = read_u32_at(data, pos)? as usize;
+        if *pos + bc_len > data.len() {
+            return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+        }
+        let bytecode = data[*pos..*pos + bc_len].to_vec();
+        *pos += bc_len;
+        let num_consts = read_u32_at(data, pos)? as usize;
+        let mut constants = Vec::with_capacity(num_consts);
+        for _ in 0..num_consts {
+            constants.push(Value::deserialize_from(data, pos)?);
+        }
+        Ok(CompiledFunction {
+            bytecode,
+            constants,
+            num_locals,
+            num_params,
+            num_free,
+        })
+    }
+}
+
+fn read_u16_at(data: &[u8], pos: &mut usize) -> Result<u16, Error> {
+    if *pos + 2 > data.len() {
+        return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+    }
+    let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
+    *pos += 2;
+    Ok(v)
+}
+
+fn read_u32_at(data: &[u8], pos: &mut usize) -> Result<u32, Error> {
+    if *pos + 4 > data.len() {
+        return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+    }
+    let v = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
+    *pos += 4;
+    Ok(v)
+}
+
+impl Value {
+    fn serialize_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            Value::Null => {
+                buf.push(0);
+            }
+            Value::Bool(b) => {
+                buf.push(1);
+                buf.push(if *b { 1 } else { 0 });
+            }
+            Value::Num(n) => {
+                buf.push(2);
+                buf.extend_from_slice(&n.to_le_bytes());
+            }
+            Value::Str(s) => {
+                buf.push(3);
+                let bytes = s.as_bytes();
+                buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                buf.extend_from_slice(bytes);
+            }
+            Value::Func(f) => {
+                buf.push(4);
+                f.serialize_into(buf);
+            }
+            Value::Closure(_) => {
+                // Closures cannot be serialized; write as null.
+                buf.push(0);
+            }
+            Value::Builtin(_) => {
+                buf.push(0);
+            }
+        }
+    }
+
+    fn deserialize_from(data: &[u8], pos: &mut usize) -> Result<Self, Error> {
+        if *pos >= data.len() {
+            return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+        }
+        let tag = data[*pos];
+        *pos += 1;
+        match tag {
+            0 => Ok(Value::Null),
+            1 => {
+                if *pos >= data.len() {
+                    return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+                }
+                let b = data[*pos] != 0;
+                *pos += 1;
+                Ok(Value::Bool(b))
+            }
+            2 => {
+                if *pos + 8 > data.len() {
+                    return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&data[*pos..*pos + 8]);
+                *pos += 8;
+                Ok(Value::Num(f64::from_le_bytes(arr)))
+            }
+            3 => {
+                let len = read_u32_at(data, pos)? as usize;
+                if *pos + len > data.len() {
+                    return Err(Error::Runtime { pos: None, msg: "bytecode truncated".to_string() });
+                }
+                let s = String::from_utf8(data[*pos..*pos + len].to_vec())
+                    .map_err(|_| Error::Runtime { pos: None, msg: "invalid utf-8 in string constant".to_string() })?;
+                *pos += len;
+                Ok(Value::Str(s))
+            }
+            4 => {
+                let f = CompiledFunction::deserialize_from(data, pos)?;
+                Ok(Value::Func(f))
+            }
+            other => Err(Error::Runtime {
+                pos: None,
+                msg: format!("unknown value tag in bytecode: {}", other),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
