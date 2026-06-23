@@ -261,6 +261,113 @@ impl Comp {
                     self.bytecode.truncate(pre_cleanup_len);
                 }
             }
+            Stmt::While { cond, body, pos } => {
+                let cond_pos = self.bytecode.len();
+                self.loop_stack
+                    .push((cond_pos, None, Vec::new()));
+                self.expr(cond)?;
+                let jump_to_end = self.emit_jump_if_false();
+                self.stmt(body)?;
+                let jump_back = self.bytecode.len();
+                self.emit_op(Op::Jump);
+                let offset = cond_pos as i16 - jump_back as i16;
+                self.emit_i16(offset);
+                let pre_cleanup_len = self.bytecode.len();
+                self.patch_jump(jump_to_end);
+                self.emit_op(Op::Pop);
+                self.emit_op(Op::Null);
+                let loop_end = self.bytecode.len();
+
+                let mut any_break_has_value = false;
+                if let Some((_, _, break_positions)) = self.loop_stack.last() {
+                    let break_positions = break_positions.clone();
+                    for (break_pos, has_value) in &break_positions {
+                        if *has_value {
+                            any_break_has_value = true;
+                            let target = loop_end as i16;
+                            let jump_instr_pos = (*break_pos - 1) as i16;
+                            let offset = target - jump_instr_pos;
+                            self.bytecode[*break_pos] = (offset & 0xff) as u8;
+                            self.bytecode[*break_pos + 1] = ((offset >> 8) & 0xff) as u8;
+                        } else {
+                            let target = pre_cleanup_len as i16;
+                            let jump_instr_pos = (*break_pos - 1) as i16;
+                            let offset = target - jump_instr_pos;
+                            self.bytecode[*break_pos] = (offset & 0xff) as u8;
+                            self.bytecode[*break_pos + 1] = ((offset >> 8) & 0xff) as u8;
+                        }
+                    }
+                }
+
+                if any_break_has_value {
+                    self.bytecode.truncate(pre_cleanup_len);
+                }
+                self.loop_stack.pop();
+            }
+            Stmt::For { init, cond, update, body, .. } => {
+                if let Some(init) = init {
+                    self.stmt(init)?;
+                }
+                let cond_pos = self.bytecode.len();
+                self.loop_stack
+                    .push((cond_pos, None, Vec::new()));
+                if let Some(cond) = cond {
+                    self.expr(cond)?;
+                    let jump_to_end = self.emit_jump_if_false();
+                    self.stmt(body)?;
+                    let update_pos = self.bytecode.len();
+                    if let Some(update) = update {
+                        self.expr(update)?;
+                        self.emit_op(Op::Pop);
+                    }
+                    let jump_back = self.bytecode.len();
+                    self.emit_op(Op::Jump);
+                    let offset = cond_pos as i16 - jump_back as i16;
+                    self.emit_i16(offset);
+                    let pre_cleanup_len = self.bytecode.len();
+                    self.patch_jump(jump_to_end);
+                    self.emit_op(Op::Pop);
+                    self.emit_op(Op::Null);
+                    let loop_end = self.bytecode.len();
+
+                    let mut any_break_has_value = false;
+                    if let Some((_, _, break_positions)) = self.loop_stack.last() {
+                        let break_positions = break_positions.clone();
+                        for (pos, has_value) in &break_positions {
+                            if *has_value {
+                                any_break_has_value = true;
+                                let target = loop_end as i16;
+                                let jump_instr_pos = (*pos - 1) as i16;
+                                let offset = target - jump_instr_pos;
+                                self.bytecode[*pos] = (offset & 0xff) as u8;
+                                self.bytecode[*pos + 1] = ((offset >> 8) & 0xff) as u8;
+                            } else {
+                                let target = pre_cleanup_len as i16;
+                                let jump_instr_pos = (*pos - 1) as i16;
+                                let offset = target - jump_instr_pos;
+                                self.bytecode[*pos] = (offset & 0xff) as u8;
+                                self.bytecode[*pos + 1] = ((offset >> 8) & 0xff) as u8;
+                            }
+                        }
+                    }
+
+                    if any_break_has_value {
+                        self.bytecode.truncate(pre_cleanup_len);
+                    }
+                } else {
+                    self.stmt(body)?;
+                    let update_pos = self.bytecode.len();
+                    if let Some(update) = update {
+                        self.expr(update)?;
+                        self.emit_op(Op::Pop);
+                    }
+                    let jump_back = self.bytecode.len();
+                    self.emit_op(Op::Jump);
+                    let offset = cond_pos as i16 - jump_back as i16;
+                    self.emit_i16(offset);
+                }
+                self.loop_stack.pop();
+            }
             Stmt::Break { label, value, pos } => {
                 let loop_idx = if let Some(label) = label {
                     self.loop_stack
@@ -668,6 +775,22 @@ impl Comp {
                 }
             }
             Stmt::Loop { body, .. } => self.find_used_vars(body, vars),
+            Stmt::While { cond, body, .. } => {
+                self.find_used_vars_in_expr(cond, vars);
+                self.find_used_vars(body, vars);
+            }
+            Stmt::For { init, cond, update, body, .. } => {
+                if let Some(init) = init {
+                    self.find_used_vars(init, vars);
+                }
+                if let Some(cond) = cond {
+                    self.find_used_vars_in_expr(cond, vars);
+                }
+                if let Some(update) = update {
+                    self.find_used_vars_in_expr(update, vars);
+                }
+                self.find_used_vars(body, vars);
+            }
             Stmt::Break { value, .. } => {
                 if let Some(v) = value {
                     self.find_used_vars_in_expr(v, vars);
@@ -741,6 +864,13 @@ impl Comp {
                 }
             }
             Stmt::Loop { body, .. } => self.find_declared_vars(body, declared),
+            Stmt::While { body, .. } => self.find_declared_vars(body, declared),
+            Stmt::For { init, body, .. } => {
+                if let Some(init) = init {
+                    self.find_declared_vars(init, declared);
+                }
+                self.find_declared_vars(body, declared);
+            }
             _ => {}
         }
     }
@@ -811,6 +941,11 @@ impl Comp {
         let target = self.bytecode.len() as i16;
         let jump_instr_pos = (pos - 1) as i16;
         let offset = target - jump_instr_pos;
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("DEBUG patch_jump: pos={}, target={}, jump_instr_pos={}, offset={}, bytecode_len={}",
+                pos, target, jump_instr_pos, offset, self.bytecode.len());
+        }
         self.bytecode[pos] = (offset & 0xff) as u8;
         self.bytecode[pos + 1] = ((offset >> 8) & 0xff) as u8;
     }

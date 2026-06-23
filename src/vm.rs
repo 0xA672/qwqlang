@@ -287,6 +287,9 @@ impl VM {
 
             let op = unsafe { std::mem::transmute::<u8, Op>(bytecode[ip]) };
 
+            #[cfg(debug_assertions)]
+            eprintln!("DEBUG ip={}, op={:?}", ip, op);
+
             match op {
                 Op::Constant => {
                     let idx = self.read_u16(&bytecode, ip + 1);
@@ -574,7 +577,14 @@ impl VM {
                 }
                 Op::Jump => {
                     let offset = self.read_i16(&bytecode, ip + 1);
-                    self.call_stack[frame_idx].ip = ((ip as i16) + offset) as usize;
+                    let target = ((ip as i16) + offset) as usize;
+                    #[cfg(debug_assertions)]
+                    eprintln!("DEBUG Jump: ip={}, offset={}, target={}, bytecode_len={}", ip, offset, target, bytecode.len());
+                    if target >= bytecode.len() {
+                        #[cfg(debug_assertions)]
+                        eprintln!("ERROR: Jump target {} >= bytecode len {}", target, bytecode.len());
+                    }
+                    self.call_stack[frame_idx].ip = target;
                 }
                 Op::JumpIfFalse => {
                     let cond = self.stack.last().unwrap_or(&Value::Null).clone();
@@ -599,8 +609,11 @@ impl VM {
                 Op::JumpIfFalsePop => {
                     let cond = self.stack.pop().unwrap_or(Value::Null);
                     let offset = self.read_i16(&bytecode, ip + 1);
+                    let target = ((ip as i16) + offset) as usize;
+                    #[cfg(debug_assertions)]
+                    eprintln!("DEBUG JumpIfFalsePop: cond={:?}, ip={}, offset={}, target={}, stack={:?}", cond, ip, offset, target, self.stack);
                     if !self.is_truthy(&cond) {
-                        self.call_stack[frame_idx].ip = ((ip as i16) + offset) as usize;
+                        self.call_stack[frame_idx].ip = target;
                     } else {
                         self.call_stack[frame_idx].ip += 3;
                     }

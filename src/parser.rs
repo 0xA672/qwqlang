@@ -40,6 +40,8 @@ impl<'a> P<'a> {
             Tok::Mut(pos) => self.mut_stmt(pos),
             Tok::If(pos) => self.if_expr(pos),
             Tok::Loop(pos) => self.loop_stmt(pos),
+            Tok::While(pos) => self.while_stmt(pos),
+            Tok::For(pos) => self.for_stmt(pos),
             Tok::Label(name, pos) => self.label_loop(&name, pos),
             Tok::Return(pos) => self.return_stmt(pos),
             Tok::Break(pos) => self.break_stmt(pos),
@@ -178,6 +180,68 @@ impl<'a> P<'a> {
         self.loop_stack.pop();
         Ok(Stmt::Loop {
             label: None,
+            body,
+            pos,
+        })
+    }
+
+    fn while_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
+        self.consume();
+        self.expect_lparen()?;
+        let cond = self.expr()?;
+        self.expect_rparen()?;
+        self.loop_stack.push(None);
+        let body = Box::new(self.block()?);
+        self.loop_stack.pop();
+        Ok(Stmt::While {
+            cond,
+            body,
+            pos,
+        })
+    }
+
+    fn for_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
+        self.consume();
+        self.expect_lparen()?;
+        let init = if matches!(self.cur, Tok::Semicolon(_)) {
+            self.consume();
+            None
+        } else if matches!(self.cur, Tok::Let(_)) | matches!(self.cur, Tok::Mut(_)) {
+            let init_stmt = self.stmt()?;
+            if matches!(init_stmt, Stmt::Let { .. }) | matches!(init_stmt, Stmt::Mut { .. }) {
+                Some(Box::new(init_stmt))
+            } else {
+                return Err(Error::Compile {
+                    pos,
+                    msg: "for loop init must be a variable declaration".to_string(),
+                });
+            }
+        } else {
+            return Err(Error::Compile {
+                pos,
+                msg: "for loop init must be a variable declaration or semicolon".to_string(),
+            });
+        };
+        let cond = if matches!(self.cur, Tok::Semicolon(_)) {
+            self.consume();
+            None
+        } else {
+            Some(self.expr()?)
+        };
+        self.expect_semicolon()?;
+        let update = if matches!(self.cur, Tok::RParen(_)) {
+            None
+        } else {
+            Some(self.expr()?)
+        };
+        self.expect_rparen()?;
+        self.loop_stack.push(None);
+        let body = Box::new(self.block()?);
+        self.loop_stack.pop();
+        Ok(Stmt::For {
+            init,
+            cond,
+            update,
             body,
             pos,
         })
@@ -339,6 +403,15 @@ impl<'a> P<'a> {
                         .map_or(false, |b| self.has_placeholder_in_stmt(b))
             }
             Stmt::Loop { body, .. } => self.has_placeholder_in_stmt(body),
+            Stmt::While { cond, body, .. } => {
+                self.has_placeholder(cond) || self.has_placeholder_in_stmt(body)
+            }
+            Stmt::For { init, cond, update, body, .. } => {
+                let init_has = init.as_ref().map_or(false, |i| self.has_placeholder_in_stmt(i));
+                let cond_has = cond.as_ref().map_or(false, |c| self.has_placeholder(c));
+                let update_has = update.as_ref().map_or(false, |u| self.has_placeholder(u));
+                init_has || cond_has || update_has || self.has_placeholder_in_stmt(body)
+            }
             Stmt::Break { value, .. } => value.as_ref().map_or(false, |v| self.has_placeholder(v)),
             Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| self.has_placeholder(v)),
             Stmt::Expr(e) => self.has_placeholder(e),
@@ -712,6 +785,19 @@ impl<'a> P<'a> {
         }
     }
 
+    fn expect_semicolon(&mut self) -> Result<(), Error> {
+        if matches!(self.cur, Tok::Semicolon(_)) {
+            self.consume();
+            Ok(())
+        } else {
+            Err(Error::Syntax {
+                pos: self.pos(),
+                msg: "expected ';'".to_string(),
+                input: self.input.to_string(),
+            })
+        }
+    }
+
     fn expect_rbrace(&mut self) -> Result<(), Error> {
         if matches!(self.cur, Tok::RBrace(_)) {
             self.consume();
@@ -773,6 +859,8 @@ impl<'a> P<'a> {
             | Tok::Or(p)
             | Tok::Loop(p)
             | Tok::Break(p)
+            | Tok::While(p)
+            | Tok::For(p)
             | Tok::Ident(_, p)
             | Tok::Label(_, p)
             | Tok::Num(_, p)

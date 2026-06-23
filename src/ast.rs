@@ -35,6 +35,18 @@ pub enum Stmt {
         body: Box<Stmt>,
         pos: Pos,
     },
+    While {
+        cond: Expr,
+        body: Box<Stmt>,
+        pos: Pos,
+    },
+    For {
+        init: Option<Box<Stmt>>,
+        cond: Option<Expr>,
+        update: Option<Expr>,
+        body: Box<Stmt>,
+        pos: Pos,
+    },
     Break {
         label: Option<String>,
         value: Option<Expr>,

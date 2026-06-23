@@ -17,6 +17,8 @@ pub enum Tok {
     Or(Pos),
     Loop(Pos),
     Break(Pos),
+    While(Pos),
+    For(Pos),
     Ident(String, Pos),
     Label(String, Pos),
     Num(f64, Pos),
@@ -213,6 +215,8 @@ impl<'a> Lex<'a> {
                                 "or" => Tok::Or(pos),
                                 "loop" => Tok::Loop(pos),
                                 "break" => Tok::Break(pos),
+                                "while" => Tok::While(pos),
+                                "for" => Tok::For(pos),
                                 _ => Tok::Ident(ident, pos),
                             };
                             return tok;
