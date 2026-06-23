@@ -78,6 +78,15 @@ impl Comp {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.bytecode.clear();
+        self.constants.clear();
+        self.locals.clear();
+        self.free.clear();
+        self.loop_stack.clear();
+        self.func_stack.clear();
+    }
+
     pub fn compile(&mut self, stmts: &[Stmt]) -> Result<CompiledFunction, Error> {
         for stmt in stmts {
             self.stmt(stmt)?;

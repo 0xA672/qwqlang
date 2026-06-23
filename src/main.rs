@@ -123,6 +123,7 @@ fn run_source(code: &str) -> Result<Value, Error> {
 
 fn run_repl() {
     let mut vm = VM::new();
+    let mut compiler = Comp::new();
     let mut input = String::new();
     let stdin = io::stdin();
 
@@ -143,7 +144,7 @@ fn run_repl() {
             continue;
         }
 
-        let result = run_code(&input, &mut vm);
+        let result = run_code(&input, &mut compiler, &mut vm);
 
         match result {
             Ok(val) => {
@@ -200,11 +201,11 @@ fn is_balanced(s: &str) -> bool {
     parens == 0 && braces == 0
 }
 
-fn run_code(code: &str, vm: &mut VM) -> Result<Value, Error> {
+fn run_code(code: &str, compiler: &mut Comp, vm: &mut VM) -> Result<Value, Error> {
     let mut parser = P::new(code);
     let stmts = parser.parse()?;
 
-    let mut compiler = Comp::new();
+    compiler.reset();
     let func = compiler.compile(&stmts)?;
 
     vm.run(func)

@@ -292,7 +292,9 @@ impl<'a> Lex<'a> {
     }
 
     fn identifier(&mut self) -> String {
-        self.identifier_start('_')
+        let first = self.chars.next().unwrap_or('_');
+        self.col += 1;
+        self.identifier_start(first)
     }
 
     fn string(&mut self) -> String {

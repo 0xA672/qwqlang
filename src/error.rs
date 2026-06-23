@@ -61,7 +61,7 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
             } else {
                 1
             };
-            dp[i][j] = dp[i - 1][j].min(dp[i][j - 1]).min(dp[i - 1][j - 1] + cost);
+            dp[i][j] = (dp[i - 1][j] + 1).min(dp[i][j - 1] + 1).min(dp[i - 1][j - 1] + cost);
         }
     }
     dp[a_chars.len()][b_chars.len()]

@@ -12,7 +12,7 @@ pub enum Value {
     Str(String),
     Func(CompiledFunction),
     Closure(Rc<RefCell<Closure>>),
-    Builtin(fn(&mut VM) -> Result<(), Error>),
+    Builtin(fn(&mut VM, u16) -> Result<(), Error>),
 }
 
 #[derive(Debug, Clone)]
@@ -694,7 +694,7 @@ impl VM {
                             });
                         }
                         Value::Builtin(f) => {
-                            f(self)?;
+                            f(self, num_args)?;
                         }
                         _ => {
                             return Err(Error::Runtime {
@@ -781,16 +781,17 @@ impl fmt::Display for Value {
     }
 }
 
-fn builtin_print(vm: &mut VM) -> Result<(), Error> {
-    let num_args = vm.stack.len();
-    for i in 0..num_args {
+fn builtin_print(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    let n = num_args as usize;
+    let start = vm.stack.len() - n;
+    for i in 0..n {
         if i > 0 {
             print!(" ");
         }
-        print!("{}", vm.stack[i]);
+        print!("{}", vm.stack[start + i]);
     }
     println!();
-    vm.stack.clear();
+    vm.stack.truncate(start);
     vm.stack.push(Value::Null);
     Ok(())
 }
