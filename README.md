@@ -1,18 +1,27 @@
 # qwqlang  ✨
 
-Ciallo~  Welcome to **qwqlang** – a smow, dynamwicawly typed scwipting wanguage with a Rust‑based compiwew and a stack‑based viwtuaw machine. It bwends familiaw syntax fwom Rust, JavaScwipt, and Ewixiw, and offews modern featuwes wike pipe opewatows, wabewwed woops, and fiwst‑cwass cwosuwes with expwicit captures. ～☆
+Ciallo~  Welcome to **qwqlang** – a smow, dynamwicawly typed scwipting wanguage with a Rust‑based compiwew and a stack‑based viwtuaw machine. It bwends familiaw syntax fwom Rust and JavaScwipt, and offews modern featuwes wike a borrow checkew, pattewn matching, pipe opewatows, wabewwed woops, and fiwst‑cwass cwosuwes with expwicit captuwes. ～☆
 
 ## Features ～✧
 
-- **Vawiabwes** – immutabwe (`let`) and mutabwe (`mut`)
+- **Bwow checkew** – Rust‑stywe ownership and bowwow checking at compiwe time (move semantics, shawed & mutabwe bowwows, Bowwow Checker Ruwes enfowced staticawwy)
+- **Vawiabwes** – immutabwe (`let`) and mutabwe (`mut`), with destwuctuwing (awway, object, enum vawiant, `Result`, `Option`)
 - **Awithmetic & Compawisons** – `+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `<=`, `>=`
-- **Logica opewatows** – `and` / `or` with showt‑ciwcuit evawuation
-- **Contwow fwow** – `if`/`else`, `loop`, `break` (with optionaw wabew and wetuwn vawue)
-- **Functions** – named (`fn`) and anonnymous awWow functions (`|x, y| x + y`)
-- **Cwosuwes** – capture outew vawiabwes expwicitwy using `[capture]` syntax
-- **Pipe opewatow** – `|>` with `_` pwacehowdew fow concwise chaining
-- **Stwings** – doubwe‑qwoted, with concatenation via `+`
-- **EwWow messages** – hewpfuw suggesstions fow undefined vawiabwes (Levenshtein distance)
+- **Logicaw opewatows** – `and` / `or` with showt‑ciwcuit evawuation
+- **Contwow fwow** – `if`/`else`, `loop`, `while`, `for` (C‑stywe), `for ... in`, `break` / `continue` (with optionaw wabew and bweak vawue), `return`
+- **Exceptions** – `throw`, `try`/`catch`/`finawwy`
+- **Functions** – named (`fn`) and anonymous awwow functions (`|x, y| x + y`)
+- **Cwosuwes** – captuwe outew vawiabwes expwicitwy using `[capture]` syntax
+- **Pipe opewatow** – `|>` with `_` pwacehowdew fow concise chaining
+- **Wefewences** – `&x` (shawed), `&mut x` (mutabwe), `*x` (dewefewence), bowwow‑checked
+- **Stwings** – doubwe‑qwoted and backtick tempwate stwings with `${...}` intewpowation; concatenation via `+`
+- **Awways & Objects** – `[1, 2, 3]`, `{ key: vawue }`, indexing with `[]`, fiewd access with `.`
+- **Enums & Pattewn Matching** – `Enum::Variant(vawue)`, `match` expwessions with guawds and destwuctuwing
+- **`Result` & `Option` types** – `Ok(...)` / `Err(...)`, `Some(...)` / `None`, with `?` twy expwession pwopagation
+- **Wist compwehensions** – `[expr for var in iterable]`
+- **Built‑in functions** – `print`, `len`, `push`, `pop`, `is_ok`, `is_err`, `is_some`, `is_none`, `unwrap`, `unwrap_or`
+- **Ewwow messages** – hewpfuw suggestions fow undefined vawiabwes (Levenshtein distance), souwce context with position indicatows
+- **Bytecode compiwew** – compiwe to `.qwqc` bytecode fiwes and wun them watew
 - **REPL** – intewactive pwompt fow quick expewimentation ～☆
 
 ## Getting Stawted ～✧
@@ -35,20 +44,44 @@ cargo build --release
 cargo run
 ```
 
-You'ww see a pwompt `qWQ>`. Entew expwessions ow statements; the wesuwt (if not `null`) wiww be pwinted. ✨
+You'ww see a pwompt `qwq>`. Entew expwessions ow statements; the wesuwt (if not `null`) wiww be pwinted. ✨
+Type `exit`, `quit`, `q`, ow `.exit` to weave.
 
-### Run a script
+### Run a scwipt
 
 ```bash
-cargo run -- < script.qwq
+cargo run -- script.qwq
 ```
 
-Or use the wibwawy in youw own Rust pwoject:
+Or use the `run` subcommand:
+
+```bash
+cargo run -- run script.qwq
+```
+
+### Compiwe to bytecode
+
+```bash
+cargo run -- compile script.qwq        # outputs script.qwqc
+cargo run -- compile script.qwq out.qwqc  # custom output path
+```
+
+### Wun a compiwed bytecode fiwe
+
+```bash
+cargo run -- script.qwqc
+```
+
+### Use as a wibwawy
+
+Add to youw `Cargo.toml`:
 
 ```toml
 [dependencies]
 qwqlang = { git = "https://github.com/0xA672/qwqlang" }
 ```
+
+Then use the `execute` function:
 
 ```rust
 use qwqlang::execute;
@@ -70,7 +103,7 @@ let b = 20;
 a + b   // 30
 ```
 
-### Mutable Vawiabwes
+### Mutabwe Vawiabwes
 
 ```
 mut counter = 0;
@@ -78,12 +111,34 @@ counter = counter + 1;
 counter   // 1
 ```
 
-### Stwings
+### Destwuctuwing
+
+```
+let [x, y] = [1, 2];
+let { name, age } = { name: "Momo", age: 3 };
+```
+
+### Stwings & Tempwate Stwings
 
 ```
 let greeting = "Ciallo";
 let name = "World";
 greeting + " " + name   // "Ciallo World"
+
+let tmpl = `Hello, ${name}!`;   // "Hello, World!"
+```
+
+### Awways & Objects
+
+```
+let arr = [1, 2, 3];
+arr[0]        // 1
+push(arr, 4); // arr is now [1, 2, 3, 4]
+len(arr)      // 4
+
+let obj = { x: 10, y: 20 };
+obj.x         // 10
+obj.y = 30;   // mutation
 ```
 
 ### If/Else
@@ -92,7 +147,7 @@ greeting + " " + name   // "Ciallo World"
 if (true) { 1 } else { 2 }   // 1
 ```
 
-### Loops & Break
+### Woops
 
 ```
 // Infinite loop, break with a value
@@ -104,6 +159,26 @@ loop { break 42; }   // 42
         break 'outer 100;
     }
 }   // 100
+
+// While loop
+mut i = 0;
+while (i < 3) { i = i + 1; }
+
+// For loop (C-style)
+for (mut i = 0; i < 5; i = i + 1) {
+    print(i);
+}
+
+// For-in loop
+for (x in [1, 2, 3]) {
+    print(x);
+}
+```
+
+### Wist Compwehensions
+
+```
+let doubled = [x * 2 for x in [1, 2, 3]];   // [2, 4, 6]
 ```
 
 ### Functions
@@ -117,7 +192,7 @@ let double = |x| x * 2;
 double(5)   // 10
 ```
 
-### Cwosuwes & Expwicit Captures
+### Cwosuwes & Expwicit Captuwes
 
 ```
 mut x = 0;
@@ -137,13 +212,84 @@ x   // 2
 10 |> _ * 2 |> _ + 5       // 25
 ```
 
-### Logical Short‑CiWcuit
+### Wefewences & Bowwow Checking
+
+```
+mut x = 10;
+let r = &mut x;
+*r = 20;
+x   // 20
+
+// Borrow checker enforces the rules:
+let y = &x;    // shared borrow OK
+let z = &x;    // multiple shared borrows OK
+// let w = &mut x;  // ERROR: cannot borrow as mutable while shared borrow active
+```
+
+### Logicaw Showt‑Ciwcuit
 
 ```
 false and print("no")   // false, print not called
 true or  print("no")    // true,  print not called
 true and 42             // 42
 false or "hello"        // "hello"
+```
+
+### Enums & Pattewn Matching
+
+```
+let v = Option::Some(42);
+match (v) {
+    Option::Some(n) => n * 2,
+    Option::None => 0,
+}   // 84
+
+// With guards
+let x = 5;
+match (x) {
+    n if n < 0 => "negative",
+    n if n == 0 => "zero",
+    n => "positive",
+}
+```
+
+### `Result`, `Option`, and the `?` Opewatow
+
+```
+fn safe_div(a, b) {
+    if (b == 0) {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+let r = safe_div(10, 2);
+is_ok(r)    // true
+unwrap(r)   // 5
+
+// ? operator propagates errors
+fn compute(x) {
+    let y = safe_div(x, 2)?;
+    Ok(y + 1)
+}
+
+let o = Some(42);
+is_some(o)     // true
+unwrap_or(o, 0) // 42
+unwrap_or(None, 0) // 0
+```
+
+### Exceptions
+
+```
+try {
+    throw "oops";
+} catch (e) {
+    print(e);   // "oops"
+} finally {
+    print("done");
+}
 ```
 
 ## Devewopment ～✧
@@ -160,10 +306,12 @@ cargo test
 
 - `lexer.rs` – tokenises souwce code
 - `parser.rs` – buiwds an AST fwom tokens
+- `borrowck.rs` – borrow checkew (ownership, moves, borrows)
 - `compiler.rs` – emits bytecode fwom the AST
 - `vm.rs` – executes bytecode on a stack‑based VM
-- `error.rs` – custome ewwow types with pwetty pwinting
-- `lib.rs` / `main.rs` – pubwic API and REPL
+- `error.rs` – custome ewwow types with pwetty pwinting and souwce context
+- `ast.rs` – AST node definitions
+- `lib.rs` / `main.rs` – pubwic API and CLI/REPL
 
 ## Contwibuting
 
