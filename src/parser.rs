@@ -1053,6 +1053,45 @@ impl<'a> P<'a> {
         }
     }
 
+    fn try_parse_first_arg(&mut self) -> Option<Expr> {
+        let tok = self.cur.clone();
+        match tok {
+            Tok::Str(s, pos) => {
+                self.consume();
+                Some(Expr::Str(s, pos))
+            }
+            Tok::Num(n, pos) => {
+                self.consume();
+                Some(Expr::Num(n, pos))
+            }
+            Tok::True(pos) => {
+                self.consume();
+                Some(Expr::Bool(true, pos))
+            }
+            Tok::False(pos) => {
+                self.consume();
+                Some(Expr::Bool(false, pos))
+            }
+            Tok::Null(pos) => {
+                self.consume();
+                Some(Expr::Null(pos))
+            }
+            Tok::LBracket(_) => {
+                let arr = self.array_literal().ok()?;
+                Some(arr)
+            }
+            Tok::LBrace(_) => {
+                let obj = self.object_literal().ok()?;
+                Some(obj)
+            }
+            Tok::Ident(_, _) => {
+                let arg = self.equality().ok()?;
+                Some(arg)
+            }
+            _ => None,
+        }
+    }
+
     fn call(&mut self) -> Result<Expr, Error> {
         let mut callee = self.primary()?;
         loop {
@@ -1076,6 +1115,14 @@ impl<'a> P<'a> {
                         field,
                         pos,
                     };
+                    if let Some(first_arg) = self.try_parse_first_arg() {
+                        callee = Expr::Pipe {
+                            args: vec![first_arg],
+                            func: Box::new(callee),
+                            has_placeholder: false,
+                            pos,
+                        };
+                    }
                 }
                 Tok::DoubleColon(pos) => {
                     self.consume();

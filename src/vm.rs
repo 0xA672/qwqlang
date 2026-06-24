@@ -948,16 +948,18 @@ impl VM {
                 Op::Object => {
                     let count = self.read_u16(&bytecode, ip + 1) as usize;
                     let mut map = HashMap::new();
-                    let mut values = Vec::with_capacity(count);
-                    for _ in 0..count {
+                    let mut values = Vec::with_capacity(count * 2);
+                    for _ in 0..count * 2 {
                         let value = self.stack.pop().unwrap_or(Value::Null);
                         values.push(value);
                     }
                     values.reverse();
                     for i in 0..count {
-                        if let Value::Str(name) = values[i].clone() {
-                            if i + 1 < count {
-                                map.insert(name, values[i + 1].clone());
+                        let name_idx = i * 2;
+                        let val_idx = i * 2 + 1;
+                        if name_idx < values.len() && val_idx < values.len() {
+                            if let Value::Str(name) = values[name_idx].clone() {
+                                map.insert(name, values[val_idx].clone());
                             }
                         }
                     }
