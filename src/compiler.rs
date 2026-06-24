@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, Pattern, Pos, Stmt, UnaryOp};
+use crate::ast::{AssignTarget, BinOp, DestructPattern, Expr, Pattern, Pos, Stmt, TemplatePart, UnaryOp};
 use crate::error::{levenshtein, Error};
 use crate::vm::{CompiledFunction, Value};
 use std::collections::{HashMap, HashSet};
@@ -49,6 +49,22 @@ pub enum Op {
     EnumVariant = 40,
     IsEnumVariant = 41,
     GetEnumValue = 42,
+    // Result/Option operations
+    IsOk = 43,
+    IsErr = 44,
+    IsSome = 45,
+    IsNone = 46,
+    UnwrapOk = 47,
+    UnwrapErr = 48,
+    UnwrapSome = 49,
+    MakeResult = 50,
+    MakeOption = 51,
+    // Exception handling
+    Throw = 52,
+    PushTry = 53,
+    PopTry = 54,
+    // String operations
+    Concat = 55,
 }
 
 #[derive(Debug)]
@@ -78,6 +94,12 @@ impl Comp {
         builtins.insert("len".to_string(), 1);
         builtins.insert("push".to_string(), 2);
         builtins.insert("pop".to_string(), 3);
+        builtins.insert("is_ok".to_string(), 4);
+        builtins.insert("is_err".to_string(), 5);
+        builtins.insert("is_some".to_string(), 6);
+        builtins.insert("is_none".to_string(), 7);
+        builtins.insert("unwrap".to_string(), 8);
+        builtins.insert("unwrap_or".to_string(), 9);
         let mut globals = HashMap::new();
         globals.insert("print".to_string(), (0, false));
         Comp {
@@ -125,89 +147,56 @@ impl Comp {
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), Error> {
         match stmt {
-            Stmt::Let { name, init, pos } => {
+            Stmt::Let { pattern, init, pos } => {
+                // Handle function global registration for simple identifier patterns
                 if self.func_stack.is_empty() && matches!(init, Expr::Func { .. }) {
-                    if !self.globals.contains_key(name) {
-                        let idx = self.next_global;
-                        self.next_global += 1;
-                        self.globals.insert(name.clone(), (idx, false));
+                    if let DestructPattern::Ident(name) = pattern {
+                        if !self.globals.contains_key(name) {
+                            let idx = self.next_global;
+                            self.next_global += 1;
+                            self.globals.insert(name.clone(), (idx, false));
+                        }
                     }
                 }
                 self.expr(init)?;
-                if !self.func_stack.is_empty() {
-                    if let Some(_idx) = self.locals.iter().position(|(n, _)| n == name) {
-                        return Err(Error::Compile {
-                            pos: *pos,
-                            msg: format!("variable '{}' already declared", name),
-                        });
-                    }
-                    self.locals.push((name.clone(), false));
-                }
-                if self.func_stack.is_empty() {
-                    if self.builtins.contains_key(name) {
-                        return Err(Error::Compile {
-                            pos: *pos,
-                            msg: format!("cannot shadow builtin '{}'", name),
-                        });
-                    }
-                    if !self.globals.contains_key(name) {
-                        let idx = self.next_global;
-                        self.next_global += 1;
-                        self.globals.insert(name.clone(), (idx, false));
-                    }
-                    let (idx, _) = self.globals[name];
-                    self.emit_op(Op::SetGlobal);
-                    self.emit_u16(idx as u16);
-                } else {
-                    self.emit_op(Op::SetLocal);
-                    self.emit_u16((self.locals.len() - 1) as u16);
-                }
+                self.compile_destruct_pattern(pattern, *pos)?;
             }
-            Stmt::Mut { name, init, pos } => {
+            Stmt::Mut { pattern, init, pos } => {
                 self.expr(init)?;
-                if !self.func_stack.is_empty() {
-                    if let Some(_idx) = self.locals.iter().position(|(n, _)| n == name) {
-                        return Err(Error::Compile {
-                            pos: *pos,
-                            msg: format!("variable '{}' already declared", name),
-                        });
-                    }
-                    self.locals.push((name.clone(), true));
-                }
-                if self.func_stack.is_empty() {
-                    if self.builtins.contains_key(name) {
-                        return Err(Error::Compile {
-                            pos: *pos,
-                            msg: format!("cannot shadow builtin '{}'", name),
-                        });
-                    }
-                    if !self.globals.contains_key(name) {
-                        let idx = self.next_global;
-                        self.next_global += 1;
-                        self.globals.insert(name.clone(), (idx, true));
-                    }
-                    let (idx, _) = self.globals[name];
-                    self.emit_op(Op::SetGlobal);
-                    self.emit_u16(idx as u16);
-                } else {
-                    self.emit_op(Op::SetLocal);
-                    self.emit_u16((self.locals.len() - 1) as u16);
-                }
+                self.compile_destruct_pattern_mut(pattern, *pos)?;
             }
-            Stmt::Assign { name, value, pos } => {
-                self.check_mutability(name, *pos)?;
-                self.expr(value)?;
-                if let Some(idx) = self.locals.iter().position(|(n, _)| n == name) {
-                    self.emit_op(Op::SetLocal);
-                    self.emit_u16(idx as u16);
-                } else if let Some(idx) = self.free.iter().position(|(n, _)| n == name) {
-                    self.emit_op(Op::SetFree);
-                    self.emit_u16(idx as u16);
-                } else if let Some(&(idx, _)) = self.globals.get(name) {
-                    self.emit_op(Op::SetGlobal);
-                    self.emit_u16(idx as u16);
-                } else {
-                    return self.undefined_var_error(name, *pos);
+            Stmt::Assign { target, value, pos } => {
+                match target {
+                    AssignTarget::Ident(name) => {
+                        self.check_mutability(name, *pos)?;
+                        self.expr(value)?;
+                        if let Some(idx) = self.locals.iter().position(|(n, _)| n == name) {
+                            self.emit_op(Op::SetLocal);
+                            self.emit_u16(idx as u16);
+                        } else if let Some(idx) = self.free.iter().position(|(n, _)| n == name) {
+                            self.emit_op(Op::SetFree);
+                            self.emit_u16(idx as u16);
+                        } else if let Some(&(idx, _)) = self.globals.get(name) {
+                            self.emit_op(Op::SetGlobal);
+                            self.emit_u16(idx as u16);
+                        } else {
+                            return self.undefined_var_error(name, *pos);
+                        }
+                    }
+                    AssignTarget::Index { object, index } => {
+                        self.expr(object)?;
+                        self.expr(index)?;
+                        self.expr(value)?;
+                        self.emit_op(Op::IndexSet);
+                    }
+                    AssignTarget::Field { object, field } => {
+                        self.expr(object)?;
+                        let field_idx = self.add_constant(Value::Str(field.clone()));
+                        self.emit_op(Op::Constant);
+                        self.emit_u16(field_idx as u16);
+                        self.expr(value)?;
+                        self.emit_op(Op::SetField);
+                    }
                 }
             }
             Stmt::Block(stmts) => {
@@ -448,12 +437,12 @@ impl Comp {
                 let idx_ident = format!("__idx_{}", pos.line);
 
                 self.stmt(&Stmt::Let {
-                    name: arr_ident.clone(),
+                    pattern: DestructPattern::Ident(arr_ident.clone()),
                     init: iterable.clone(),
                     pos: *pos,
                 })?;
                 self.stmt(&Stmt::Let {
-                    name: idx_ident.clone(),
+                    pattern: DestructPattern::Ident(idx_ident.clone()),
                     init: Expr::Num(0.0, *pos),
                     pos: *pos,
                 })?;
@@ -466,7 +455,7 @@ impl Comp {
                 self.expr(&Expr::Ident(arr_ident.clone(), *pos))?;
                 self.emit_op(Op::Index);
                 self.stmt(&Stmt::Let {
-                    name: var.clone(),
+                    pattern: DestructPattern::Ident(var.clone()),
                     init: Expr::Null(*pos),
                     pos: *pos,
                 })?;
@@ -479,14 +468,14 @@ impl Comp {
 
                 self.stmt(body)?;
 
-                let update_pos = self.bytecode.len();
+                let _update_pos = self.bytecode.len();
                 self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
                 self.emit_op(Op::Constant);
                 let const_idx = self.add_constant(Value::Num(1.0));
                 self.emit_u16(const_idx as u16);
                 self.emit_op(Op::Add);
                 self.stmt(&Stmt::Assign {
-                    name: idx_ident.clone(),
+                    target: AssignTarget::Ident(idx_ident.clone()),
                     value: Expr::Ident(idx_ident.clone(), *pos),
                     pos: *pos,
                 })?;
@@ -537,6 +526,84 @@ impl Comp {
                 }
                 self.emit_op(Op::Return);
             }
+            Stmt::Throw { value, .. } => {
+                self.expr(value)?;
+                self.emit_op(Op::Throw);
+            }
+            Stmt::Try { try_blk, catch_var, catch_blk, finally_blk, .. } => {
+                // Push try handler
+                self.emit_op(Op::PushTry);
+                let catch_jump_offset_pos = self.bytecode.len();
+                self.emit_u16(0); // Placeholder for catch handler offset
+                let finally_jump_offset_pos = self.bytecode.len();
+                self.emit_u16(0); // Placeholder for finally handler offset
+                
+                // Execute try block
+                self.stmt(try_blk)?;
+                
+                // Pop try handler (no exception occurred)
+                self.emit_op(Op::PopTry);
+                
+                // Jump to finally (or end if no finally)
+                let skip_catch_jump = self.emit_jump();
+                
+                // Catch handler
+                let catch_start = self.bytecode.len();
+                // Patch the catch offset
+                let catch_offset = catch_start - catch_jump_offset_pos;
+                self.bytecode[catch_jump_offset_pos] = (catch_offset & 0xff) as u8;
+                self.bytecode[catch_jump_offset_pos + 1] = ((catch_offset >> 8) & 0xff) as u8;
+                
+                if let Some(catch_blk) = catch_blk {
+                    if let Some(var_name) = catch_var {
+                        // Bind caught exception to variable
+                        if !self.func_stack.is_empty() {
+                            self.locals.push((var_name.clone(), false));
+                        }
+                        if self.func_stack.is_empty() {
+                            if !self.globals.contains_key(var_name) {
+                                let idx = self.next_global;
+                                self.next_global += 1;
+                                self.globals.insert(var_name.clone(), (idx, false));
+                            }
+                            let (idx, _) = self.globals[var_name];
+                            self.emit_op(Op::SetGlobal);
+                            self.emit_u16(idx as u16);
+                        } else {
+                            self.emit_op(Op::SetLocal);
+                            self.emit_u16((self.locals.len() - 1) as u16);
+                        }
+                    }
+                    self.stmt(catch_blk)?;
+                } else {
+                    // No catch block, just pop the exception
+                    self.emit_op(Op::Pop);
+                }
+                
+                // Jump to finally (or end)
+                let skip_finally_after_catch = if finally_blk.is_some() {
+                    Some(self.emit_jump())
+                } else {
+                    None
+                };
+                
+                // Finally handler
+                let finally_start = self.bytecode.len();
+                // Patch the finally offset
+                let finally_offset = finally_start - finally_jump_offset_pos;
+                self.bytecode[finally_jump_offset_pos] = (finally_offset & 0xff) as u8;
+                self.bytecode[finally_jump_offset_pos + 1] = ((finally_offset >> 8) & 0xff) as u8;
+                
+                if let Some(finally_blk) = finally_blk {
+                    self.stmt(finally_blk)?;
+                }
+                
+                // Patch jumps
+                self.patch_jump(skip_catch_jump);
+                if let Some(skip_finally) = skip_finally_after_catch {
+                    self.patch_jump(skip_finally);
+                }
+            }
             Stmt::Expr(e) => {
                 self.expr(e)?;
             }
@@ -563,6 +630,33 @@ impl Comp {
                 let idx = self.add_constant(Value::Str(s.clone()));
                 self.emit_op(Op::Constant);
                 self.emit_u16(idx as u16);
+            }
+            Expr::TemplateStr(parts, _) => {
+                // Concatenate all parts
+                let mut first = true;
+                for part in parts {
+                    match part {
+                        TemplatePart::Literal(s) => {
+                            let idx = self.add_constant(Value::Str(s.clone()));
+                            self.emit_op(Op::Constant);
+                            self.emit_u16(idx as u16);
+                        }
+                        TemplatePart::Expr(e) => {
+                            self.expr(e)?;
+                        }
+                    }
+                    if first {
+                        first = false;
+                    } else {
+                        self.emit_op(Op::Concat);
+                    }
+                }
+                // If empty template string, push empty string
+                if parts.is_empty() {
+                    let idx = self.add_constant(Value::Str(String::new()));
+                    self.emit_op(Op::Constant);
+                    self.emit_u16(idx as u16);
+                }
             }
             Expr::Array(elements, _) => {
                 for elem in elements {
@@ -610,31 +704,167 @@ impl Comp {
             Expr::Match { expr, arms, .. } => {
                 self.expr(expr)?;
                 let mut end_jumps = Vec::new();
-                for (pattern, arm_expr) in arms {
-                    match pattern {
+                for arm in arms {
+                    // Handle pattern matching
+                    match &arm.pattern {
                         Pattern::Literal(lit) => {
-                            let lit_end = self.emit_jump_if_false();
+                            // Duplicate the matched value for comparison
+                            self.emit_op(Op::Constant);
+                            let idx = self.add_constant(Value::Num(0.0));
+                            self.emit_u16(idx as u16);
+                            self.emit_op(Op::Index);
                             self.expr(lit)?;
                             self.emit_op(Op::Eq);
-                            let arm_jump = self.emit_jump();
-                            self.patch_jump(lit_end);
+                            let guard_jump = if let Some(guard) = &arm.guard {
+                                let pattern_fail_jump = self.emit_jump_if_false();
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.patch_jump(pattern_fail_jump);
+                                self.emit_op(Op::Pop);
+                                Some(guard_fail_jump)
+                            } else {
+                                Some(self.emit_jump_if_false())
+                            };
                             self.emit_op(Op::Pop);
-                            self.expr(arm_expr)?;
-                            end_jumps.push(arm_jump);
+                            self.expr(&arm.body)?;
+                            end_jumps.push(self.emit_jump());
+                            if let Some(gj) = guard_jump {
+                                self.patch_jump(gj);
+                            }
                         }
                         Pattern::Wildcard => {
-                            self.expr(arm_expr)?;
-                            end_jumps.push(self.emit_jump());
+                            // Wildcard always matches, but check guard
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
                         }
                         Pattern::Ident(name) => {
-                            self.emit_op(Op::Pop);
-                            self.stmt(&Stmt::Let {
-                                name: name.clone(),
-                                init: Expr::Null(Pos { line: 1, col: 1 }),
-                                pos: Pos { line: 1, col: 1 },
-                            })?;
-                            self.expr(arm_expr)?;
-                            end_jumps.push(self.emit_jump());
+                            // Bind the matched value to the identifier
+                            if let Some(guard) = &arm.guard {
+                                // Duplicate value for guard check
+                                self.emit_op(Op::Constant);
+                                let idx = self.add_constant(Value::Num(0.0));
+                                self.emit_u16(idx as u16);
+                                self.emit_op(Op::Index);
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.stmt(&Stmt::Let {
+                                    pattern: DestructPattern::Ident(name.clone()),
+                                    init: Expr::Null(Pos { line: 1, col: 1 }),
+                                    pos: Pos { line: 1, col: 1 },
+                                })?;
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.stmt(&Stmt::Let {
+                                    pattern: DestructPattern::Ident(name.clone()),
+                                    init: Expr::Null(Pos { line: 1, col: 1 }),
+                                    pos: Pos { line: 1, col: 1 },
+                                })?;
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
+                        }
+                        Pattern::Array(elements) => {
+                            // Check if value is array with correct length
+                            self.emit_op(Op::Constant);
+                            let idx = self.add_constant(Value::Str("len".to_string()));
+                            self.emit_u16(idx as u16);
+                            self.emit_op(Op::GetField);
+                            self.emit_op(Op::Constant);
+                            let len_idx = self.add_constant(Value::Num(elements.len() as f64));
+                            self.emit_u16(len_idx as u16);
+                            self.emit_op(Op::Eq);
+                            let pattern_fail_jump = self.emit_jump_if_false();
+                            
+                            // Bind each element
+                            for (i, elem_pattern) in elements.iter().enumerate() {
+                                self.emit_op(Op::Constant);
+                                let idx = self.add_constant(Value::Num(i as f64));
+                                self.emit_u16(idx as u16);
+                                self.emit_op(Op::Index);
+                                match elem_pattern {
+                                    Pattern::Ident(name) => {
+                                        self.stmt(&Stmt::Let {
+                                            pattern: DestructPattern::Ident(name.clone()),
+                                            init: Expr::Null(Pos { line: 1, col: 1 }),
+                                            pos: Pos { line: 1, col: 1 },
+                                        })?;
+                                    }
+                                    Pattern::Wildcard => {
+                                        self.emit_op(Op::Pop);
+                                    }
+                                    _ => {
+                                        // Nested patterns would need more complex handling
+                                        self.emit_op(Op::Pop);
+                                    }
+                                }
+                            }
+                            
+                            // Check guard
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
+                            self.patch_jump(pattern_fail_jump);
+                        }
+                        Pattern::Object(fields) => {
+                            // Bind each field
+                            for (field_name, field_pattern) in fields {
+                                let field_idx = self.add_constant(Value::Str(field_name.clone()));
+                                self.emit_op(Op::Constant);
+                                self.emit_u16(field_idx as u16);
+                                self.emit_op(Op::GetField);
+                                match field_pattern {
+                                    Pattern::Ident(name) => {
+                                        self.stmt(&Stmt::Let {
+                                            pattern: DestructPattern::Ident(name.clone()),
+                                            init: Expr::Null(Pos { line: 1, col: 1 }),
+                                            pos: Pos { line: 1, col: 1 },
+                                        })?;
+                                    }
+                                    Pattern::Wildcard => {
+                                        self.emit_op(Op::Pop);
+                                    }
+                                    _ => {
+                                        self.emit_op(Op::Pop);
+                                    }
+                                }
+                            }
+                            
+                            // Check guard
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
                         }
                         Pattern::EnumVariant { enum_name, variant, binding } => {
                             self.emit_op(Op::Constant);
@@ -649,16 +879,118 @@ impl Comp {
                             if let Some(binding_name) = binding {
                                 self.emit_op(Op::Pop);
                                 self.stmt(&Stmt::Let {
-                                    name: binding_name.clone(),
+                                    pattern: DestructPattern::Ident(binding_name.clone()),
                                     init: Expr::Null(Pos { line: 1, col: 1 }),
                                     pos: Pos { line: 1, col: 1 },
                                 })?;
                             } else {
                                 self.emit_op(Op::Pop);
                             }
-                            self.expr(arm_expr)?;
-                            end_jumps.push(self.emit_jump());
+                            
+                            // Check guard
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
                             self.patch_jump(variant_jump);
+                        }
+                        Pattern::ResultOk { binding } => {
+                            self.emit_op(Op::IsOk);
+                            let result_jump = self.emit_jump_if_false();
+                            self.emit_op(Op::UnwrapOk);
+                            self.stmt(&Stmt::Let {
+                                pattern: DestructPattern::Ident(binding.clone()),
+                                init: Expr::Null(Pos { line: 1, col: 1 }),
+                                pos: Pos { line: 1, col: 1 },
+                            })?;
+                            
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
+                            self.patch_jump(result_jump);
+                        }
+                        Pattern::ResultErr { binding } => {
+                            self.emit_op(Op::IsErr);
+                            let result_jump = self.emit_jump_if_false();
+                            self.emit_op(Op::UnwrapErr);
+                            self.stmt(&Stmt::Let {
+                                pattern: DestructPattern::Ident(binding.clone()),
+                                init: Expr::Null(Pos { line: 1, col: 1 }),
+                                pos: Pos { line: 1, col: 1 },
+                            })?;
+                            
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
+                            self.patch_jump(result_jump);
+                        }
+                        Pattern::OptionSome { binding } => {
+                            self.emit_op(Op::IsSome);
+                            let option_jump = self.emit_jump_if_false();
+                            self.emit_op(Op::UnwrapSome);
+                            self.stmt(&Stmt::Let {
+                                pattern: DestructPattern::Ident(binding.clone()),
+                                init: Expr::Null(Pos { line: 1, col: 1 }),
+                                pos: Pos { line: 1, col: 1 },
+                            })?;
+                            
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
+                            self.patch_jump(option_jump);
+                        }
+                        Pattern::OptionNone => {
+                            self.emit_op(Op::IsNone);
+                            let option_jump = self.emit_jump_if_false();
+                            
+                            if let Some(guard) = &arm.guard {
+                                self.expr(guard)?;
+                                let guard_fail_jump = self.emit_jump_if_false();
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                                self.patch_jump(guard_fail_jump);
+                            } else {
+                                self.emit_op(Op::Pop);
+                                self.expr(&arm.body)?;
+                                end_jumps.push(self.emit_jump());
+                            }
+                            self.patch_jump(option_jump);
                         }
                     }
                 }
@@ -666,6 +998,71 @@ impl Comp {
                     self.patch_jump(j);
                 }
                 self.emit_op(Op::Pop);
+            }
+            Expr::Result { is_ok, value, .. } => {
+                self.expr(value)?;
+                if *is_ok {
+                    self.emit_op(Op::True);
+                } else {
+                    self.emit_op(Op::False);
+                }
+                self.emit_op(Op::MakeResult);
+            }
+            Expr::Option { is_some, value, .. } => {
+                if *is_some {
+                    if let Some(v) = value {
+                        self.expr(v)?;
+                    } else {
+                        self.emit_op(Op::Null);
+                    }
+                    self.emit_op(Op::True);
+                } else {
+                    self.emit_op(Op::Null);
+                    self.emit_op(Op::False);
+                }
+                self.emit_op(Op::MakeOption);
+            }
+            Expr::TryExpr { expr, .. } => {
+                // Push try handler for error propagation
+                self.emit_op(Op::PushTry);
+                let catch_jump_offset_pos = self.bytecode.len();
+                self.emit_u16(0); // Placeholder for catch handler offset
+                let finally_jump_offset_pos = self.bytecode.len();
+                self.emit_u16(0); // Placeholder for finally handler offset
+                
+                // Evaluate the expression
+                self.expr(expr)?;
+                
+                // Check if Result is Ok or Option is Some
+                self.emit_op(Op::IsOk);
+                let is_ok_jump = self.emit_jump_if_false();
+                
+                // If Ok, unwrap and continue
+                self.emit_op(Op::UnwrapOk);
+                
+                // Pop try handler
+                self.emit_op(Op::PopTry);
+                
+                // Jump over error handling
+                let success_jump = self.emit_jump();
+                
+                // Error handling: re-throw the error
+                let catch_start = self.bytecode.len();
+                let catch_offset = catch_start - catch_jump_offset_pos;
+                self.bytecode[catch_jump_offset_pos] = (catch_offset & 0xff) as u8;
+                self.bytecode[catch_jump_offset_pos + 1] = ((catch_offset >> 8) & 0xff) as u8;
+                
+                self.emit_op(Op::Throw);
+                
+                // Finally handler (not used for try expr, but needed for structure)
+                let finally_start = self.bytecode.len();
+                let finally_offset = finally_start - finally_jump_offset_pos;
+                self.bytecode[finally_jump_offset_pos] = (finally_offset & 0xff) as u8;
+                self.bytecode[finally_jump_offset_pos + 1] = ((finally_offset >> 8) & 0xff) as u8;
+                
+                // Patch jumps
+                self.patch_jump(is_ok_jump);
+                self.patch_jump(success_jump);
             }
             Expr::Ident(name, pos) => {
                 #[cfg(debug_assertions)]
@@ -999,13 +1396,27 @@ impl Comp {
 
     fn find_used_vars(&self, stmt: &Stmt, vars: &mut HashSet<String>) {
         match stmt {
-            Stmt::Let { init, .. } => {
+            Stmt::Let { pattern, init, .. } => {
                 self.find_used_vars_in_expr(init, vars);
+                self.find_used_vars_in_pattern(pattern, vars);
             }
-            Stmt::Mut { init, .. } => {
+            Stmt::Mut { pattern, init, .. } => {
                 self.find_used_vars_in_expr(init, vars);
+                self.find_used_vars_in_pattern(pattern, vars);
             }
-            Stmt::Assign { value, .. } => {
+            Stmt::Assign { target, value, .. } => {
+                match target {
+                    AssignTarget::Ident(name) => {
+                        vars.insert(name.clone());
+                    }
+                    AssignTarget::Index { object, index } => {
+                        self.find_used_vars_in_expr(object, vars);
+                        self.find_used_vars_in_expr(index, vars);
+                    }
+                    AssignTarget::Field { object, .. } => {
+                        self.find_used_vars_in_expr(object, vars);
+                    }
+                }
                 self.find_used_vars_in_expr(value, vars);
             }
             Stmt::Block(stmts) => {
@@ -1057,6 +1468,18 @@ impl Comp {
                     self.find_used_vars_in_expr(v, vars);
                 }
             }
+            Stmt::Throw { value, .. } => {
+                self.find_used_vars_in_expr(value, vars);
+            }
+            Stmt::Try { try_blk, catch_blk, finally_blk, .. } => {
+                self.find_used_vars(try_blk, vars);
+                if let Some(c) = catch_blk {
+                    self.find_used_vars(c, vars);
+                }
+                if let Some(f) = finally_blk {
+                    self.find_used_vars(f, vars);
+                }
+            }
             Stmt::Expr(e) => self.find_used_vars_in_expr(e, vars),
         }
     }
@@ -1065,6 +1488,58 @@ impl Comp {
         match expr {
             Expr::Ident(name, _) => {
                 vars.insert(name.clone());
+            }
+            Expr::TemplateStr(parts, _) => {
+                for part in parts {
+                    match part {
+                        TemplatePart::Literal(_) => {}
+                        TemplatePart::Expr(e) => {
+                            self.find_used_vars_in_expr(e, vars);
+                        }
+                    }
+                }
+            }
+            Expr::Array(elements, _) => {
+                for elem in elements {
+                    self.find_used_vars_in_expr(elem, vars);
+                }
+            }
+            Expr::Index { object, index, .. } => {
+                self.find_used_vars_in_expr(object, vars);
+                self.find_used_vars_in_expr(index, vars);
+            }
+            Expr::Object(fields, _) => {
+                for (_, value) in fields {
+                    self.find_used_vars_in_expr(value, vars);
+                }
+            }
+            Expr::Field { object, .. } => {
+                self.find_used_vars_in_expr(object, vars);
+            }
+            Expr::EnumVariant { value, .. } => {
+                if let Some(v) = value {
+                    self.find_used_vars_in_expr(v, vars);
+                }
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.find_used_vars_in_expr(expr, vars);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.find_used_vars_in_expr(guard, vars);
+                    }
+                    self.find_used_vars_in_expr(&arm.body, vars);
+                }
+            }
+            Expr::Result { value, .. } => {
+                self.find_used_vars_in_expr(value, vars);
+            }
+            Expr::Option { value, .. } => {
+                if let Some(v) = value {
+                    self.find_used_vars_in_expr(v, vars);
+                }
+            }
+            Expr::TryExpr { expr, .. } => {
+                self.find_used_vars_in_expr(expr, vars);
             }
             Expr::BinOp { left, right, .. } => {
                 self.find_used_vars_in_expr(left, vars);
@@ -1100,11 +1575,11 @@ impl Comp {
 
     fn find_declared_vars(&self, stmt: &Stmt, declared: &mut HashSet<String>) {
         match stmt {
-            Stmt::Let { name, .. } => {
-                declared.insert(name.clone());
+            Stmt::Let { pattern, .. } => {
+                self.find_declared_vars_in_pattern(pattern, declared);
             }
-            Stmt::Mut { name, .. } => {
-                declared.insert(name.clone());
+            Stmt::Mut { pattern, .. } => {
+                self.find_declared_vars_in_pattern(pattern, declared);
             }
             Stmt::Block(stmts) => {
                 for s in stmts {
@@ -1130,6 +1605,18 @@ impl Comp {
             Stmt::ForIn { var, body, .. } => {
                 declared.insert(var.clone());
                 self.find_declared_vars(body, declared);
+            }
+            Stmt::Try { try_blk, catch_var, catch_blk, finally_blk, .. } => {
+                self.find_declared_vars(try_blk, declared);
+                if let Some(var_name) = catch_var {
+                    declared.insert(var_name.clone());
+                }
+                if let Some(c) = catch_blk {
+                    self.find_declared_vars(c, declared);
+                }
+                if let Some(f) = finally_blk {
+                    self.find_declared_vars(f, declared);
+                }
             }
             _ => {}
         }
@@ -1250,5 +1737,144 @@ impl Comp {
             )
         };
         Err(Error::Compile { pos, msg })
+    }
+
+    fn compile_destruct_pattern(&mut self, pattern: &DestructPattern, pos: Pos) -> Result<(), Error> {
+        match pattern {
+            DestructPattern::Ident(name) => {
+                if !self.func_stack.is_empty() {
+                    if let Some(_idx) = self.locals.iter().position(|(n, _)| n == name) {
+                        return Err(Error::Compile {
+                            pos,
+                            msg: format!("variable '{}' already declared", name),
+                        });
+                    }
+                    self.locals.push((name.clone(), false));
+                }
+                if self.func_stack.is_empty() {
+                    if self.builtins.contains_key(name) {
+                        return Err(Error::Compile {
+                            pos,
+                            msg: format!("cannot shadow builtin '{}'", name),
+                        });
+                    }
+                    if !self.globals.contains_key(name) {
+                        let idx = self.next_global;
+                        self.next_global += 1;
+                        self.globals.insert(name.clone(), (idx, false));
+                    }
+                    let (idx, _) = self.globals[name];
+                    self.emit_op(Op::SetGlobal);
+                    self.emit_u16(idx as u16);
+                } else {
+                    self.emit_op(Op::SetLocal);
+                    self.emit_u16((self.locals.len() - 1) as u16);
+                }
+            }
+            DestructPattern::Array(elements) => {
+                for (i, elem) in elements.iter().enumerate() {
+                    // Duplicate array
+                    self.emit_op(Op::Constant);
+                    let idx = self.add_constant(Value::Num(i as f64));
+                    self.emit_u16(idx as u16);
+                    self.emit_op(Op::Index);
+                    self.compile_destruct_pattern(elem, pos)?;
+                }
+                // Pop the array
+                self.emit_op(Op::Pop);
+            }
+            DestructPattern::Object(fields) => {
+                for (field_name, field_pattern) in fields {
+                    // Get field from object
+                    let field_idx = self.add_constant(Value::Str(field_name.clone()));
+                    self.emit_op(Op::Constant);
+                    self.emit_u16(field_idx as u16);
+                    self.emit_op(Op::GetField);
+                    self.compile_destruct_pattern(field_pattern, pos)?;
+                }
+                // Pop the object
+                self.emit_op(Op::Pop);
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_destruct_pattern_mut(&mut self, pattern: &DestructPattern, pos: Pos) -> Result<(), Error> {
+        match pattern {
+            DestructPattern::Ident(name) => {
+                if !self.func_stack.is_empty() {
+                    if let Some(_idx) = self.locals.iter().position(|(n, _)| n == name) {
+                        return Err(Error::Compile {
+                            pos,
+                            msg: format!("variable '{}' already declared", name),
+                        });
+                    }
+                    self.locals.push((name.clone(), true));
+                }
+                if self.func_stack.is_empty() {
+                    if self.builtins.contains_key(name) {
+                        return Err(Error::Compile {
+                            pos,
+                            msg: format!("cannot shadow builtin '{}'", name),
+                        });
+                    }
+                    if !self.globals.contains_key(name) {
+                        let idx = self.next_global;
+                        self.next_global += 1;
+                        self.globals.insert(name.clone(), (idx, true));
+                    }
+                    let (idx, _) = self.globals[name];
+                    self.emit_op(Op::SetGlobal);
+                    self.emit_u16(idx as u16);
+                } else {
+                    self.emit_op(Op::SetLocal);
+                    self.emit_u16((self.locals.len() - 1) as u16);
+                }
+            }
+            DestructPattern::Array(elements) => {
+                for (i, elem) in elements.iter().enumerate() {
+                    self.emit_op(Op::Constant);
+                    let idx = self.add_constant(Value::Num(i as f64));
+                    self.emit_u16(idx as u16);
+                    self.emit_op(Op::Index);
+                    self.compile_destruct_pattern_mut(elem, pos)?;
+                }
+                self.emit_op(Op::Pop);
+            }
+            DestructPattern::Object(fields) => {
+                for (field_name, field_pattern) in fields {
+                    let field_idx = self.add_constant(Value::Str(field_name.clone()));
+                    self.emit_op(Op::Constant);
+                    self.emit_u16(field_idx as u16);
+                    self.emit_op(Op::GetField);
+                    self.compile_destruct_pattern_mut(field_pattern, pos)?;
+                }
+                self.emit_op(Op::Pop);
+            }
+        }
+        Ok(())
+    }
+
+    fn find_declared_vars_in_pattern(&self, pattern: &DestructPattern, declared: &mut HashSet<String>) {
+        match pattern {
+            DestructPattern::Ident(name) => {
+                declared.insert(name.clone());
+            }
+            DestructPattern::Array(elements) => {
+                for elem in elements {
+                    self.find_declared_vars_in_pattern(elem, declared);
+                }
+            }
+            DestructPattern::Object(fields) => {
+                for (_, field_pattern) in fields {
+                    self.find_declared_vars_in_pattern(field_pattern, declared);
+                }
+            }
+        }
+    }
+
+    fn find_used_vars_in_pattern(&self, pattern: &DestructPattern, vars: &mut HashSet<String>) {
+        // DestructPattern doesn't use variables, it declares them
+        let _ = (pattern, vars);
     }
 }

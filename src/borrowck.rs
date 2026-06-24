@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Pos, Stmt, UnaryOp};
+use crate::ast::{AssignTarget, DestructPattern, Expr, Pos, Stmt, TemplatePart, UnaryOp};
 use crate::error::Error;
 use std::collections::HashMap;
 
@@ -103,17 +103,21 @@ impl BorrowChecker {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), Error> {
         match stmt {
-            Stmt::Let { name, init, .. } => {
+            Stmt::Let { pattern, init, .. } => {
                 self.check_expr(init)?;
-                self.declare_var(name, false);
+                for var in Self::pattern_bound_vars(pattern) {
+                    self.declare_var(&var, false);
+                }
             }
-            Stmt::Mut { name, init, .. } => {
+            Stmt::Mut { pattern, init, .. } => {
                 self.check_expr(init)?;
-                self.declare_var(name, true);
+                for var in Self::pattern_bound_vars(pattern) {
+                    self.declare_var(&var, true);
+                }
             }
-            Stmt::Assign { name, value, pos } => {
+            Stmt::Assign { target, value, pos } => {
                 self.check_expr(value)?;
-                self.check_mutable_access(name, *pos)?;
+                self.check_assign_target(target, *pos)?;
             }
             Stmt::Block(stmts) => {
                 self.push_scope();
@@ -179,6 +183,21 @@ impl BorrowChecker {
                     self.check_expr(value)?;
                 }
             }
+            Stmt::Throw { value, .. } => {
+                self.check_expr(value)?;
+            }
+            Stmt::Try { try_blk, catch_var, catch_blk, finally_blk, .. } => {
+                self.check_stmt(try_blk)?;
+                if let (Some(var), Some(blk)) = (catch_var, catch_blk) {
+                    self.push_scope();
+                    self.declare_var(var, false);
+                    self.check_stmt(blk)?;
+                    self.pop_scope();
+                }
+                if let Some(blk) = finally_blk {
+                    self.check_stmt(blk)?;
+                }
+            }
             Stmt::Expr(e) => {
                 self.check_expr(e)?;
             }
@@ -194,6 +213,13 @@ impl BorrowChecker {
             | Expr::Str(_, _)
             | Expr::Array(_, _)
             | Expr::Object(_, _) => {}
+            Expr::TemplateStr(parts, _) => {
+                for part in parts {
+                    if let TemplatePart::Expr(e) = part {
+                        self.check_expr(e)?;
+                    }
+                }
+            }
             Expr::Ident(name, pos) => {
                 self.check_read_access(name, *pos)?;
             }
@@ -211,9 +237,23 @@ impl BorrowChecker {
             }
             Expr::Match { expr, arms, .. } => {
                 self.check_expr(expr)?;
-                for (_, arm_expr) in arms {
-                    self.check_expr(arm_expr)?;
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.check_expr(guard)?;
+                    }
+                    self.check_expr(&arm.body)?;
                 }
+            }
+            Expr::Result { value, .. } => {
+                self.check_expr(value)?;
+            }
+            Expr::Option { value, .. } => {
+                if let Some(value) = value {
+                    self.check_expr(value)?;
+                }
+            }
+            Expr::TryExpr { expr, .. } => {
+                self.check_expr(expr)?;
             }
             Expr::BinOp { left, right, .. } => {
                 self.check_expr(left)?;
@@ -378,5 +418,41 @@ impl BorrowChecker {
             }),
             None => Ok(()),
         }
+    }
+
+    fn pattern_bound_vars(pattern: &DestructPattern) -> Vec<String> {
+        let mut vars = Vec::new();
+        match pattern {
+            DestructPattern::Ident(name) => {
+                vars.push(name.clone());
+            }
+            DestructPattern::Array(patterns) => {
+                for p in patterns {
+                    vars.extend(Self::pattern_bound_vars(p));
+                }
+            }
+            DestructPattern::Object(fields) => {
+                for (_, p) in fields {
+                    vars.extend(Self::pattern_bound_vars(p));
+                }
+            }
+        }
+        vars
+    }
+
+    fn check_assign_target(&mut self, target: &AssignTarget, pos: Pos) -> Result<(), Error> {
+        match target {
+            AssignTarget::Ident(name) => {
+                self.check_mutable_access(name, pos)?;
+            }
+            AssignTarget::Index { object, index } => {
+                self.check_expr(object)?;
+                self.check_expr(index)?;
+            }
+            AssignTarget::Field { object, .. } => {
+                self.check_expr(object)?;
+            }
+        }
+        Ok(())
     }
 }

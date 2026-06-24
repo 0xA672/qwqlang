@@ -18,6 +18,14 @@ pub enum Value {
         variant: String,
         value: Option<Box<Value>>,
     },
+    Result {
+        is_ok: bool,
+        value: Box<Value>,
+    },
+    Option {
+        is_some: bool,
+        value: Option<Box<Value>>,
+    },
     Func(CompiledFunction),
     Closure(Rc<RefCell<Closure>>),
     Builtin(fn(&mut VM, u16) -> Result<(), Error>),
@@ -199,6 +207,18 @@ impl Value {
                     buf.push(0);
                 }
             }
+            Value::Result { is_ok, value } => {
+                buf.push(8);
+                buf.push(if *is_ok { 1 } else { 0 });
+                value.serialize_into(buf);
+            }
+            Value::Option { is_some, value } => {
+                buf.push(9);
+                buf.push(if *is_some { 1 } else { 0 });
+                if let Some(val) = value {
+                    val.serialize_into(buf);
+                }
+            }
             Value::Ref(_) | Value::MutRef(_) => {
                 buf.push(0);
             }
@@ -336,6 +356,34 @@ impl Value {
                     value,
                 })
             }
+            8 => {
+                if *pos >= data.len() {
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
+                }
+                let is_ok = data[*pos] != 0;
+                *pos += 1;
+                let value = Box::new(Value::deserialize_from(data, pos)?);
+                Ok(Value::Result { is_ok, value })
+            }
+            9 => {
+                if *pos >= data.len() {
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
+                }
+                let is_some = data[*pos] != 0;
+                *pos += 1;
+                let value = if is_some {
+                    Some(Box::new(Value::deserialize_from(data, pos)?))
+                } else {
+                    None
+                };
+                Ok(Value::Option { is_some, value })
+            }
             other => Err(Error::Runtime {
                 pos: None,
                 msg: format!("unknown value tag in bytecode: {}", other),
@@ -365,11 +413,21 @@ pub struct Frame {
 }
 
 #[derive(Debug)]
+pub struct TryFrame {
+    pub catch_ip: Option<usize>,
+    pub finally_ip: Option<usize>,
+    pub end_ip: usize,
+    pub stack_height: usize,
+}
+
+#[derive(Debug)]
 pub struct VM {
     stack: Vec<Value>,
     call_stack: Vec<Frame>,
     globals: Vec<Value>,
     open_upvalues: Vec<Rc<RefCell<Upvalue>>>,
+    try_stack: Vec<TryFrame>,
+    exception: Option<Value>,
 }
 
 impl VM {
@@ -379,11 +437,19 @@ impl VM {
             call_stack: Vec::new(),
             globals: Vec::new(),
             open_upvalues: Vec::new(),
+            try_stack: Vec::new(),
+            exception: None,
         };
         vm.globals.push(Value::Builtin(builtin_print));
         vm.globals.push(Value::Builtin(builtin_len));
         vm.globals.push(Value::Builtin(builtin_push));
         vm.globals.push(Value::Builtin(builtin_pop));
+        vm.globals.push(Value::Builtin(builtin_is_ok));
+        vm.globals.push(Value::Builtin(builtin_is_err));
+        vm.globals.push(Value::Builtin(builtin_is_some));
+        vm.globals.push(Value::Builtin(builtin_is_none));
+        vm.globals.push(Value::Builtin(builtin_unwrap));
+        vm.globals.push(Value::Builtin(builtin_unwrap_or));
         vm
     }
 
@@ -1054,6 +1120,236 @@ impl VM {
                     }
                     self.call_stack[frame_idx].ip += 1;
                 }
+                Op::IsOk => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Result { is_ok, .. } => {
+                            self.stack.push(Value::Bool(is_ok));
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "is_ok expects Result value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::IsErr => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Result { is_ok, .. } => {
+                            self.stack.push(Value::Bool(!is_ok));
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "is_err expects Result value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::IsSome => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Option { is_some, .. } => {
+                            self.stack.push(Value::Bool(is_some));
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "is_some expects Option value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::IsNone => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Option { is_some, .. } => {
+                            self.stack.push(Value::Bool(!is_some));
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "is_none expects Option value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::UnwrapOk => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Result { is_ok, value } => {
+                            if is_ok {
+                                self.stack.push(*value);
+                            } else {
+                                let err_val = *value.clone();
+                                self.exception = Some(*value);
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: format!("unwrap called on Err value: {}", err_val),
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "unwrap expects Result value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::UnwrapErr => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Result { is_ok, value } => {
+                            if !is_ok {
+                                self.stack.push(*value);
+                            } else {
+                                let ok_val = *value.clone();
+                                self.exception = Some(*value);
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: format!("unwrap_err called on Ok value: {}", ok_val),
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "unwrap_err expects Result value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::UnwrapSome => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Option { is_some, value } => {
+                            if is_some {
+                                if let Some(v) = value {
+                                    self.stack.push(*v);
+                                } else {
+                                    self.stack.push(Value::Null);
+                                }
+                            } else {
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: "unwrap called on None value".to_string(),
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "unwrap expects Option value".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::MakeResult => {
+                    let is_ok_byte = bytecode[ip + 1];
+                    let is_ok = is_ok_byte != 0;
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    self.stack.push(Value::Result {
+                        is_ok,
+                        value: Box::new(val),
+                    });
+                    self.call_stack[frame_idx].ip += 2;
+                }
+                Op::MakeOption => {
+                    let is_some_byte = bytecode[ip + 1];
+                    let is_some = is_some_byte != 0;
+                    if is_some {
+                        let val = self.stack.pop().unwrap_or(Value::Null);
+                        self.stack.push(Value::Option {
+                            is_some,
+                            value: Some(Box::new(val)),
+                        });
+                    } else {
+                        self.stack.push(Value::Option {
+                            is_some: false,
+                            value: None,
+                        });
+                    }
+                    self.call_stack[frame_idx].ip += 2;
+                }
+                Op::Throw => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    self.exception = Some(val.clone());
+                    // Find the nearest try block to handle the exception
+                    if let Some(try_frame) = self.try_stack.pop() {
+                        self.stack.truncate(try_frame.stack_height);
+                        if let Some(finally_ip) = try_frame.finally_ip {
+                            self.call_stack[frame_idx].ip = finally_ip;
+                        } else if let Some(catch_ip) = try_frame.catch_ip {
+                            self.stack.push(val);
+                            self.call_stack[frame_idx].ip = catch_ip;
+                        } else {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "unhandled exception".to_string(),
+                            });
+                        }
+                    } else {
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: format!("unhandled exception: {}", val),
+                        });
+                    }
+                }
+                Op::PushTry => {
+                    let catch_offset = self.read_i16(&bytecode, ip + 1);
+                    let finally_offset = self.read_i16(&bytecode, ip + 3);
+                    let end_offset = self.read_i16(&bytecode, ip + 5);
+                    
+                    let catch_ip = if catch_offset != 0 {
+                        Some(((ip as i16) + catch_offset) as usize)
+                    } else {
+                        None
+                    };
+                    let finally_ip = if finally_offset != 0 {
+                        Some(((ip as i16) + finally_offset) as usize)
+                    } else {
+                        None
+                    };
+                    let end_ip = ((ip as i16) + end_offset) as usize;
+                    
+                    self.try_stack.push(TryFrame {
+                        catch_ip,
+                        finally_ip,
+                        end_ip,
+                        stack_height: self.stack.len(),
+                    });
+                    self.call_stack[frame_idx].ip += 7;
+                }
+                Op::PopTry => {
+                    self.try_stack.pop();
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::Concat => {
+                    let b = self.stack.pop().unwrap_or(Value::Null);
+                    let a = self.stack.pop().unwrap_or(Value::Null);
+                    match (a, b) {
+                        (Value::Str(x), Value::Str(y)) => {
+                            self.stack.push(Value::Str(format!("{}{}", x, y)));
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "concat expects string operands".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
             }
         }
     }
@@ -1119,6 +1415,21 @@ impl VM {
                     _ => false,
                 }
             }
+            (Value::Result { is_ok: x_ok, value: xval },
+             Value::Result { is_ok: y_ok, value: yval }) => {
+                x_ok == y_ok && self.values_eq(xval, yval)
+            }
+            (Value::Option { is_some: x_some, value: xval },
+             Value::Option { is_some: y_some, value: yval }) => {
+                if x_some != y_some {
+                    return false;
+                }
+                match (xval, yval) {
+                    (Some(x), Some(y)) => self.values_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
             (Value::Ref(x), Value::Ref(y)) | (Value::MutRef(x), Value::MutRef(y)) => {
                 Rc::ptr_eq(x, y)
             }
@@ -1167,6 +1478,24 @@ impl fmt::Display for Value {
                     write!(f, "{}::{}({})", enum_name, variant, val)
                 } else {
                     write!(f, "{}::{}", enum_name, variant)
+                }
+            }
+            Value::Result { is_ok, value } => {
+                if *is_ok {
+                    write!(f, "Ok({})", value)
+                } else {
+                    write!(f, "Err({})", value)
+                }
+            }
+            Value::Option { is_some, value } => {
+                if *is_some {
+                    if let Some(val) = value {
+                        write!(f, "Some({})", val)
+                    } else {
+                        write!(f, "Some")
+                    }
+                } else {
+                    write!(f, "None")
                 }
             }
             Value::Func(_) => write!(f, "<function>"),
@@ -1259,6 +1588,177 @@ fn builtin_pop(vm: &mut VM, num_args: u16) -> Result<(), Error> {
             return Err(Error::Runtime {
                 pos: None,
                 msg: "pop expects array as argument".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_is_ok(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("is_ok expects 1 argument, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    match val {
+        Value::Result { is_ok, .. } => {
+            vm.stack.push(Value::Bool(is_ok));
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "is_ok expects Result value".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_is_err(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("is_err expects 1 argument, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    match val {
+        Value::Result { is_ok, .. } => {
+            vm.stack.push(Value::Bool(!is_ok));
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "is_err expects Result value".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_is_some(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("is_some expects 1 argument, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    match val {
+        Value::Option { is_some, .. } => {
+            vm.stack.push(Value::Bool(is_some));
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "is_some expects Option value".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_is_none(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("is_none expects 1 argument, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    match val {
+        Value::Option { is_some, .. } => {
+            vm.stack.push(Value::Bool(!is_some));
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "is_none expects Option value".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_unwrap(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("unwrap expects 1 argument, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    match val {
+        Value::Result { is_ok, value } => {
+            if is_ok {
+                vm.stack.push(*value);
+            } else {
+                let err_val = *value.clone();
+                vm.exception = Some(*value);
+                return Err(Error::Runtime {
+                    pos: None,
+                    msg: format!("unwrap called on Err value: {}", err_val),
+                });
+            }
+        }
+        Value::Option { is_some, value } => {
+            if is_some {
+                if let Some(v) = value {
+                    vm.stack.push(*v);
+                } else {
+                    vm.stack.push(Value::Null);
+                }
+            } else {
+                return Err(Error::Runtime {
+                    pos: None,
+                    msg: "unwrap called on None value".to_string(),
+                });
+            }
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "unwrap expects Result or Option value".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_unwrap_or(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 2 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("unwrap_or expects 2 arguments, got {}", num_args),
+        });
+    }
+    let default = vm.stack.pop().unwrap_or(Value::Null);
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    match val {
+        Value::Result { is_ok, value } => {
+            if is_ok {
+                vm.stack.push(*value);
+            } else {
+                vm.stack.push(default);
+            }
+        }
+        Value::Option { is_some, value } => {
+            if is_some {
+                if let Some(v) = value {
+                    vm.stack.push(*v);
+                } else {
+                    vm.stack.push(Value::Null);
+                }
+            } else {
+                vm.stack.push(default);
+            }
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "unwrap_or expects Result or Option value".to_string(),
             })
         }
     }

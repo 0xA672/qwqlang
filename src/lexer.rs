@@ -24,10 +24,21 @@ pub enum Tok {
     Match(Pos),
     Enum(Pos),
     Struct(Pos),
+    Throw(Pos),
+    Try(Pos),
+    Catch(Pos),
+    Finally(Pos),
+    Ok(Pos),
+    Err(Pos),
+    Some(Pos),
+    None(Pos),
     Ident(String, Pos),
     Label(String, Pos),
     Num(f64, Pos),
     Str(String, Pos),
+    TemplateStr(String, Pos),
+    Dollar(Pos),
+    Spread(Pos),
     Add(Pos),
     Sub(Pos),
     Mul(Pos),
@@ -233,6 +244,15 @@ impl<'a> Lex<'a> {
                             let s = self.string();
                             return Tok::Str(s, pos);
                         }
+                        '`' => {
+                            self.col += 1;
+                            let s = self.template_string();
+                            return Tok::TemplateStr(s, pos);
+                        }
+                        '$' => {
+                            self.col += 1;
+                            return Tok::Dollar(pos);
+                        }
                         '#' => {
                             self.col += 1;
                             if let Some(&'?') = self.chars.peek() {
@@ -266,6 +286,14 @@ impl<'a> Lex<'a> {
                                 "match" => Tok::Match(pos),
                                 "enum" => Tok::Enum(pos),
                                 "struct" => Tok::Struct(pos),
+                                "throw" => Tok::Throw(pos),
+                                "try" => Tok::Try(pos),
+                                "catch" => Tok::Catch(pos),
+                                "finally" => Tok::Finally(pos),
+                                "Ok" => Tok::Ok(pos),
+                                "Err" => Tok::Err(pos),
+                                "Some" => Tok::Some(pos),
+                                "None" => Tok::None(pos),
                                 _ => Tok::Ident(ident, pos),
                             };
                             return tok;
@@ -368,6 +396,43 @@ impl<'a> Lex<'a> {
                             't' => s.push('\t'),
                             '"' => s.push('"'),
                             '\\' => s.push('\\'),
+                            _ => s.push(nc),
+                        }
+                    }
+                }
+                '\n' => {
+                    self.line += 1;
+                    self.col = 1;
+                    s.push('\n');
+                }
+                _ => {
+                    s.push(c);
+                    self.col += 1;
+                }
+            }
+        }
+        s
+    }
+
+    fn template_string(&mut self) -> String {
+        let mut s = String::new();
+        while let Some(c) = self.chars.next() {
+            match c {
+                '`' => {
+                    self.col += 1;
+                    break;
+                }
+                '\\' => {
+                    self.col += 1;
+                    if let Some(nc) = self.chars.next() {
+                        self.col += 1;
+                        match nc {
+                            'n' => s.push('\n'),
+                            'r' => s.push('\r'),
+                            't' => s.push('\t'),
+                            '`' => s.push('`'),
+                            '\\' => s.push('\\'),
+                            '$' => s.push('$'),
                             _ => s.push(nc),
                         }
                     }

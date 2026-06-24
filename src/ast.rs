@@ -9,17 +9,17 @@ pub struct Pos {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let {
-        name: String,
+        pattern: DestructPattern,
         init: Expr,
         pos: Pos,
     },
     Mut {
-        name: String,
+        pattern: DestructPattern,
         init: Expr,
         pos: Pos,
     },
     Assign {
-        name: String,
+        target: AssignTarget,
         value: Expr,
         pos: Pos,
     },
@@ -66,7 +66,38 @@ pub enum Stmt {
         value: Option<Expr>,
         pos: Pos,
     },
+    Throw {
+        value: Expr,
+        pos: Pos,
+    },
+    Try {
+        try_blk: Box<Stmt>,
+        catch_var: Option<String>,
+        catch_blk: Option<Box<Stmt>>,
+        finally_blk: Option<Box<Stmt>>,
+        pos: Pos,
+    },
     Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DestructPattern {
+    Ident(String),
+    Array(Vec<DestructPattern>),
+    Object(Vec<(String, DestructPattern)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignTarget {
+    Ident(String),
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+    },
+    Field {
+        object: Box<Expr>,
+        field: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +106,7 @@ pub enum Expr {
     Bool(bool, Pos),
     Num(f64, Pos),
     Str(String, Pos),
+    TemplateStr(Vec<TemplatePart>, Pos),
     Ident(String, Pos),
     Array(Vec<Expr>, Pos),
     Index {
@@ -96,7 +128,21 @@ pub enum Expr {
     },
     Match {
         expr: Box<Expr>,
-        arms: Vec<(Pattern, Expr)>,
+        arms: Vec<MatchArm>,
+        pos: Pos,
+    },
+    Result {
+        is_ok: bool,
+        value: Box<Expr>,
+        pos: Pos,
+    },
+    Option {
+        is_some: bool,
+        value: Option<Box<Expr>>,
+        pos: Pos,
+    },
+    TryExpr {
+        expr: Box<Expr>,
         pos: Pos,
     },
     BinOp {
@@ -136,15 +182,40 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum TemplatePart {
+    Literal(String),
+    Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Literal(Expr),
     Wildcard,
     Ident(String),
+    Array(Vec<Pattern>),
+    Object(Vec<(String, Pattern)>),
     EnumVariant {
         enum_name: String,
         variant: String,
         binding: Option<String>,
     },
+    ResultOk {
+        binding: String,
+    },
+    ResultErr {
+        binding: String,
+    },
+    OptionSome {
+        binding: String,
+    },
+    OptionNone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
