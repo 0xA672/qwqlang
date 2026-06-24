@@ -78,15 +78,19 @@ fn default_compile_output(input: &str) -> String {
 
 fn compile_file(input: &str, output: &str) -> Result<(), Error> {
     let code = fs::read_to_string(input).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
         pos: None,
         msg: format!("cannot read '{}': {}", input, e),
     })?;
     let mut parser = P::new(&code);
-    let stmts = parser.parse()?;
+    let stmts = parser.parse().map_err(|e| e.with_filename(input.to_string()))?;
     let mut compiler = Comp::new();
-    let func = compiler.compile(&stmts)?;
+    let func = compiler.compile(&stmts).map_err(|e| e.with_filename(input.to_string()).with_input(code.clone()))?;
     let bytes = func.to_bytes();
     fs::write(output, bytes).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
         pos: None,
         msg: format!("cannot write '{}': {}", output, e),
     })?;
@@ -95,19 +99,23 @@ fn compile_file(input: &str, output: &str) -> Result<(), Error> {
 
 fn run_any_file(path: &str) -> Result<(), Error> {
     let bytes = fs::read(path).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
         pos: None,
         msg: format!("cannot read '{}': {}", path, e),
     })?;
     if path.ends_with(".qwqc") || bytes.starts_with(b"QWQBC") {
-        let func = CompiledFunction::from_bytes(&bytes)?;
+        let func = CompiledFunction::from_bytes(&bytes).map_err(|e| e.with_filename(path.to_string()))?;
         let mut vm = VM::new();
-        vm.run(func)?;
+        vm.run(func).map_err(|e| e.with_filename(path.to_string()))?;
     } else {
         let code = String::from_utf8(bytes).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("invalid utf-8 in '{}': {}", path, e),
         })?;
-        run_source(&code)?;
+        run_source(&code).map_err(|e| e.with_filename(path.to_string()).with_input(code.clone()))?;
     }
     Ok(())
 }
@@ -116,9 +124,9 @@ fn run_source(code: &str) -> Result<Value, Error> {
     let mut parser = P::new(code);
     let stmts = parser.parse()?;
     let mut compiler = Comp::new();
-    let func = compiler.compile(&stmts)?;
+    let func = compiler.compile(&stmts).map_err(|e| e.with_input(code.to_string()))?;
     let mut vm = VM::new();
-    vm.run(func)
+    vm.run(func).map_err(|e| e.with_input(code.to_string()))
 }
 
 fn run_repl() {
@@ -206,9 +214,9 @@ fn run_code(code: &str, compiler: &mut Comp, vm: &mut VM) -> Result<Value, Error
     let stmts = parser.parse()?;
 
     compiler.reset();
-    let func = compiler.compile(&stmts)?;
+    let func = compiler.compile(&stmts).map_err(|e| e.with_input(code.to_string()))?;
 
-    vm.run(func)
+    vm.run(func).map_err(|e| e.with_input(code.to_string()))
 }
 
 pub fn execute(code: &str) -> Result<Value, Error> {

@@ -317,6 +317,8 @@ impl BorrowChecker {
             Some(VarState::Owned { is_mut }) => {
                 if kind == BorrowKind::Mutable && !is_mut {
                     return Err(Error::Compile {
+            input: None,
+            filename: None,
                         pos,
                         msg: format!(
                             "cannot borrow '{}' as mutable, as it is not declared as mutable",
@@ -330,6 +332,8 @@ impl BorrowChecker {
                         for b in &borrows {
                             if b.kind == BorrowKind::Mutable {
                                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                                     pos,
                                     msg: format!(
                                         "cannot borrow '{}' as shared because it is also borrowed as mutable",
@@ -342,6 +346,8 @@ impl BorrowChecker {
                     BorrowKind::Mutable => {
                         if !borrows.is_empty() {
                             return Err(Error::Compile {
+            input: None,
+            filename: None,
                                 pos,
                                 msg: format!(
                                     "cannot borrow '{}' as mutable more than once at a time",
@@ -354,6 +360,8 @@ impl BorrowChecker {
                 Ok(())
             }
             Some(VarState::Moved) => Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos,
                 msg: format!("borrow of moved value: '{}'", name),
             }),
@@ -367,6 +375,8 @@ impl BorrowChecker {
             Some(VarState::Owned { is_mut }) => {
                 if !is_mut {
                     return Err(Error::Compile {
+            input: None,
+            filename: None,
                         pos,
                         msg: format!(
                             "cannot assign to '{}' as it is not declared as mutable",
@@ -377,6 +387,8 @@ impl BorrowChecker {
                 let borrows = self.get_borrows(name);
                 if !borrows.is_empty() {
                     return Err(Error::Compile {
+            input: None,
+            filename: None,
                         pos,
                         msg: format!(
                             "cannot assign to '{}' because it is borrowed",
@@ -387,6 +399,8 @@ impl BorrowChecker {
                 Ok(())
             }
             Some(VarState::Moved) => Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos,
                 msg: format!("assignment to moved value: '{}'", name),
             }),
@@ -402,6 +416,8 @@ impl BorrowChecker {
                 for b in &borrows {
                     if b.kind == BorrowKind::Mutable {
                         return Err(Error::Compile {
+            input: None,
+            filename: None,
                             pos,
                             msg: format!(
                                 "cannot use '{}' because it was mutably borrowed",
@@ -413,6 +429,8 @@ impl BorrowChecker {
                 Ok(())
             }
             Some(VarState::Moved) => Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos,
                 msg: format!("use of moved value: '{}'", name),
             }),

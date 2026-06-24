@@ -76,6 +76,8 @@ impl CompiledFunction {
     pub fn from_bytes(data: &[u8]) -> Result<Self, Error> {
         if data.len() < 6 || &data[..5] != b"QWQBC" {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "invalid bytecode file (bad magic)".to_string(),
             });
@@ -83,6 +85,8 @@ impl CompiledFunction {
         let version = data[5];
         if version != 1 {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: format!("unsupported bytecode version: {}", version),
             });
@@ -98,6 +102,8 @@ impl CompiledFunction {
         let bc_len = read_u32_at(data, pos)? as usize;
         if *pos + bc_len > data.len() {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "bytecode truncated".to_string(),
             });
@@ -122,6 +128,8 @@ impl CompiledFunction {
 fn read_u16_at(data: &[u8], pos: &mut usize) -> Result<u16, Error> {
     if *pos + 2 > data.len() {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: "bytecode truncated".to_string(),
         });
@@ -134,6 +142,8 @@ fn read_u16_at(data: &[u8], pos: &mut usize) -> Result<u16, Error> {
 fn read_u32_at(data: &[u8], pos: &mut usize) -> Result<u32, Error> {
     if *pos + 4 > data.len() {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: "bytecode truncated".to_string(),
         });
@@ -228,6 +238,8 @@ impl Value {
     fn deserialize_from(data: &[u8], pos: &mut usize) -> Result<Self, Error> {
         if *pos >= data.len() {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "bytecode truncated".to_string(),
             });
@@ -239,6 +251,8 @@ impl Value {
             1 => {
                 if *pos >= data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
@@ -250,6 +264,8 @@ impl Value {
             2 => {
                 if *pos + 8 > data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
@@ -263,12 +279,16 @@ impl Value {
                 let len = read_u32_at(data, pos)? as usize;
                 if *pos + len > data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
                 }
                 let s = String::from_utf8(data[*pos..*pos + len].to_vec()).map_err(|_| {
                     Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "invalid utf-8 in string constant".to_string(),
                     }
@@ -295,12 +315,16 @@ impl Value {
                     let name_len = read_u32_at(data, pos)? as usize;
                     if *pos + name_len > data.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "bytecode truncated".to_string(),
                         });
                     }
                     let name = String::from_utf8(data[*pos..*pos + name_len].to_vec()).map_err(|_| {
                         Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid utf-8 in string".to_string(),
                         }
@@ -315,12 +339,16 @@ impl Value {
                 let enum_len = read_u32_at(data, pos)? as usize;
                 if *pos + enum_len > data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
                 }
                 let enum_name = String::from_utf8(data[*pos..*pos + enum_len].to_vec()).map_err(|_| {
                     Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "invalid utf-8 in string".to_string(),
                     }
@@ -330,12 +358,16 @@ impl Value {
                 let variant_len = read_u32_at(data, pos)? as usize;
                 if *pos + variant_len > data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
                 }
                 let variant = String::from_utf8(data[*pos..*pos + variant_len].to_vec()).map_err(|_| {
                     Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "invalid utf-8 in string".to_string(),
                     }
@@ -359,6 +391,8 @@ impl Value {
             8 => {
                 if *pos >= data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
@@ -371,6 +405,8 @@ impl Value {
             9 => {
                 if *pos >= data.len() {
                     return Err(Error::Runtime {
+            input: None,
+            filename: None,
                         pos: None,
                         msg: "bytecode truncated".to_string(),
                     });
@@ -385,6 +421,8 @@ impl Value {
                 Ok(Value::Option { is_some, value })
             }
             other => Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: format!("unknown value tag in bytecode: {}", other),
             }),
@@ -511,6 +549,8 @@ impl VM {
                         (Value::Str(x), Value::Str(y)) => Value::Str(format!("{}{}", x, y)),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for +".to_string(),
                             })
@@ -526,6 +566,8 @@ impl VM {
                         (Value::Num(x), Value::Num(y)) => Value::Num(x - y),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for -".to_string(),
                             })
@@ -541,6 +583,8 @@ impl VM {
                         (Value::Num(x), Value::Num(y)) => Value::Num(x * y),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for *".to_string(),
                             })
@@ -556,6 +600,8 @@ impl VM {
                         (Value::Num(x), Value::Num(y)) => {
                             if y == 0.0 {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: "division by zero".to_string(),
                                 });
@@ -564,6 +610,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for /".to_string(),
                             })
@@ -592,6 +640,8 @@ impl VM {
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x < y),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for <".to_string(),
                             })
@@ -608,6 +658,8 @@ impl VM {
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x > y),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for >".to_string(),
                             })
@@ -624,6 +676,8 @@ impl VM {
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x <= y),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for <=".to_string(),
                             })
@@ -640,6 +694,8 @@ impl VM {
                         (Value::Str(x), Value::Str(y)) => Value::Bool(x >= y),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operands for >=".to_string(),
                             })
@@ -654,6 +710,8 @@ impl VM {
                         Value::Num(x) => Value::Num(-x),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid operand for negation".to_string(),
                             })
@@ -670,6 +728,8 @@ impl VM {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     if idx as usize >= self.globals.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "undefined global variable".to_string(),
                         });
@@ -704,6 +764,8 @@ impl VM {
                     );
                     if stack_idx >= self.stack.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid local index".to_string(),
                         });
@@ -717,6 +779,8 @@ impl VM {
                     let stack_idx = bp + idx as usize;
                     if stack_idx >= self.stack.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid local index".to_string(),
                         });
@@ -730,6 +794,8 @@ impl VM {
                     let upvalues = &closure_clone.borrow().upvalues;
                     if idx as usize >= upvalues.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid free variable index".to_string(),
                         });
@@ -750,6 +816,8 @@ impl VM {
                     let upvalues = &mut closure_mut.upvalues;
                     if idx as usize >= upvalues.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid free variable index".to_string(),
                         });
@@ -818,6 +886,8 @@ impl VM {
                         Value::Func(f) => f.clone(),
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "expected function in constant pool".to_string(),
                             })
@@ -847,6 +917,8 @@ impl VM {
                     let callee_idx = self.stack.len() - num_args as usize - 1;
                     if callee_idx >= self.stack.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "stack underflow".to_string(),
                         });
@@ -859,6 +931,8 @@ impl VM {
                             let func = &closure.borrow().func;
                             if func.num_params != num_args {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: format!(
                                         "expected {} arguments, got {}",
@@ -878,6 +952,8 @@ impl VM {
                         Value::Func(func) => {
                             if func.num_params != num_args {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: format!(
                                         "expected {} arguments, got {}",
@@ -903,6 +979,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "cannot call non-function".to_string(),
                             })
@@ -923,6 +1001,8 @@ impl VM {
                     let idx = self.read_u16(&bytecode, ip + 1);
                     if idx as usize >= self.globals.len() {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid builtin index".to_string(),
                         });
@@ -977,6 +1057,8 @@ impl VM {
                                 self.stack.push(elements[idx].clone());
                             } else {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: format!("array index out of bounds: {}", idx),
                                 });
@@ -984,6 +1066,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid indexing operation".to_string(),
                             })
@@ -1004,6 +1088,8 @@ impl VM {
                                 self.stack.push(Value::Null);
                             } else {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: format!("array index out of bounds: {}", idx),
                                 });
@@ -1011,6 +1097,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "invalid index assignment".to_string(),
                             })
@@ -1030,6 +1118,8 @@ impl VM {
                         }
                     } else {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid field access".to_string(),
                         });
@@ -1046,6 +1136,8 @@ impl VM {
                         self.stack.push(Value::Null);
                     } else {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid field assignment".to_string(),
                         });
@@ -1065,6 +1157,8 @@ impl VM {
                         self.stack.push(enum_val);
                     } else {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "invalid enum variant".to_string(),
                         });
@@ -1094,6 +1188,8 @@ impl VM {
                         }
                     } else {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: "expected enum value".to_string(),
                         });
@@ -1130,6 +1226,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "is_ok expects Result value".to_string(),
                             })
@@ -1145,6 +1243,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "is_err expects Result value".to_string(),
                             })
@@ -1160,6 +1260,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "is_some expects Option value".to_string(),
                             })
@@ -1175,6 +1277,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "is_none expects Option value".to_string(),
                             })
@@ -1192,6 +1296,8 @@ impl VM {
                                 let err_val = *value.clone();
                                 self.exception = Some(*value);
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: format!("unwrap called on Err value: {}", err_val),
                                 });
@@ -1199,6 +1305,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "unwrap expects Result value".to_string(),
                             })
@@ -1216,6 +1324,8 @@ impl VM {
                                 let ok_val = *value.clone();
                                 self.exception = Some(*value);
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: format!("unwrap_err called on Ok value: {}", ok_val),
                                 });
@@ -1223,6 +1333,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "unwrap_err expects Result value".to_string(),
                             })
@@ -1242,6 +1354,8 @@ impl VM {
                                 }
                             } else {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: "unwrap called on None value".to_string(),
                                 });
@@ -1249,6 +1363,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "unwrap expects Option value".to_string(),
                             })
@@ -1296,12 +1412,16 @@ impl VM {
                             self.call_stack[frame_idx].ip = catch_ip;
                         } else {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "unhandled exception".to_string(),
                             });
                         }
                     } else {
                         return Err(Error::Runtime {
+            input: None,
+            filename: None,
                             pos: None,
                             msg: format!("unhandled exception: {}", val),
                         });
@@ -1345,6 +1465,8 @@ impl VM {
                         }
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "concat expects string operands".to_string(),
                             })
@@ -1359,6 +1481,8 @@ impl VM {
                         Value::Array(arr) => arr,
                         _ => {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "list comprehension requires an array".to_string(),
                             })
@@ -1395,6 +1519,8 @@ impl VM {
                             Value::Closure(c) => c.clone(),
                             _ => {
                                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                     pos: None,
                                     msg: "expected function in list comprehension".to_string(),
                                 })
@@ -1403,6 +1529,8 @@ impl VM {
 
                         if func.borrow().func.num_params != 1 {
                             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                                 pos: None,
                                 msg: "list comprehension function expects 1 argument".to_string(),
                             });
@@ -1812,6 +1940,8 @@ fn builtin_print(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_len(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("len expects 1 argument, got {}", num_args),
         });
@@ -1822,6 +1952,8 @@ fn builtin_len(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         Value::Array(arr) => arr.borrow().len() as f64,
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "len expects string or array".to_string(),
             })
@@ -1834,6 +1966,8 @@ fn builtin_len(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_push(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 2 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("push expects 2 arguments, got {}", num_args),
         });
@@ -1847,6 +1981,8 @@ fn builtin_push(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "push expects array as first argument".to_string(),
             })
@@ -1858,6 +1994,8 @@ fn builtin_push(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_pop(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("pop expects 1 argument, got {}", num_args),
         });
@@ -1873,6 +2011,8 @@ fn builtin_pop(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "pop expects array as argument".to_string(),
             })
@@ -1884,6 +2024,8 @@ fn builtin_pop(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_is_ok(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("is_ok expects 1 argument, got {}", num_args),
         });
@@ -1895,6 +2037,8 @@ fn builtin_is_ok(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "is_ok expects Result value".to_string(),
             })
@@ -1906,6 +2050,8 @@ fn builtin_is_ok(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_is_err(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("is_err expects 1 argument, got {}", num_args),
         });
@@ -1917,6 +2063,8 @@ fn builtin_is_err(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "is_err expects Result value".to_string(),
             })
@@ -1928,6 +2076,8 @@ fn builtin_is_err(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_is_some(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("is_some expects 1 argument, got {}", num_args),
         });
@@ -1939,6 +2089,8 @@ fn builtin_is_some(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "is_some expects Option value".to_string(),
             })
@@ -1950,6 +2102,8 @@ fn builtin_is_some(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_is_none(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("is_none expects 1 argument, got {}", num_args),
         });
@@ -1961,6 +2115,8 @@ fn builtin_is_none(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "is_none expects Option value".to_string(),
             })
@@ -1972,6 +2128,8 @@ fn builtin_is_none(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_unwrap(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 1 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("unwrap expects 1 argument, got {}", num_args),
         });
@@ -1985,6 +2143,8 @@ fn builtin_unwrap(vm: &mut VM, num_args: u16) -> Result<(), Error> {
                 let err_val = *value.clone();
                 vm.exception = Some(*value);
                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                     pos: None,
                     msg: format!("unwrap called on Err value: {}", err_val),
                 });
@@ -1999,6 +2159,8 @@ fn builtin_unwrap(vm: &mut VM, num_args: u16) -> Result<(), Error> {
                 }
             } else {
                 return Err(Error::Runtime {
+            input: None,
+            filename: None,
                     pos: None,
                     msg: "unwrap called on None value".to_string(),
                 });
@@ -2006,6 +2168,8 @@ fn builtin_unwrap(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "unwrap expects Result or Option value".to_string(),
             })
@@ -2017,6 +2181,8 @@ fn builtin_unwrap(vm: &mut VM, num_args: u16) -> Result<(), Error> {
 fn builtin_unwrap_or(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     if num_args != 2 {
         return Err(Error::Runtime {
+            input: None,
+            filename: None,
             pos: None,
             msg: format!("unwrap_or expects 2 arguments, got {}", num_args),
         });
@@ -2044,6 +2210,8 @@ fn builtin_unwrap_or(vm: &mut VM, num_args: u16) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::Runtime {
+            input: None,
+            filename: None,
                 pos: None,
                 msg: "unwrap_or expects Result or Option value".to_string(),
             })

@@ -152,6 +152,7 @@ impl<'a> P<'a> {
                 Ok(DestructPattern::Ident(name))
             }
             _ => Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: format!("expected destruct pattern, got {:?}", tok),
                 input: self.input.to_string(),
@@ -165,6 +166,8 @@ impl<'a> P<'a> {
             Expr::Index { object, index, pos } => Ok(AssignTarget::Index { object, index }),
             Expr::Field { object, field, pos } => Ok(AssignTarget::Field { object, field }),
             _ => Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos: expr.pos(),
                 msg: "cannot assign to this expression".to_string(),
             }),
@@ -295,6 +298,8 @@ impl<'a> P<'a> {
                 });
             } else {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: "expected 'in' in for loop".to_string(),
                 });
@@ -306,6 +311,8 @@ impl<'a> P<'a> {
             None
         } else {
             return Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos,
                 msg: "for loop init must be a semicolon".to_string(),
             });
@@ -343,6 +350,8 @@ impl<'a> P<'a> {
             self.consume();
             if !self.loop_stack.iter().any(|l| l.as_deref() == Some(&label)) {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: format!("undefined label '{}'", label),
                 });
@@ -359,6 +368,8 @@ impl<'a> P<'a> {
         self.consume_semicolon()?;
         if self.loop_stack.is_empty() && label.is_none() {
             return Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos,
                 msg: "break outside loop".to_string(),
             });
@@ -384,6 +395,8 @@ impl<'a> P<'a> {
             self.consume();
             if !self.loop_stack.iter().any(|l| l.as_deref() == Some(&label)) {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: format!("undefined label '{}'", label),
                 });
@@ -395,6 +408,8 @@ impl<'a> P<'a> {
         self.consume_semicolon()?;
         if self.loop_stack.is_empty() && label.is_none() {
             return Err(Error::Compile {
+            input: None,
+            filename: None,
                 pos,
                 msg: "continue outside loop".to_string(),
             });
@@ -476,6 +491,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected '{'".to_string(),
                 input: self.input.to_string(),
@@ -607,6 +623,7 @@ impl<'a> P<'a> {
                 Ok(Pattern::Literal(Expr::Str(s, pos)))
             }
             _ => Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: format!("unexpected token in pattern: {:?}", tok),
                 input: self.input.to_string(),
@@ -1136,6 +1153,7 @@ impl<'a> P<'a> {
                         };
                     } else {
                         return Err(Error::Syntax {
+            filename: None,
                             pos,
                             msg: "expected identifier before '::'".to_string(),
                             input: self.input.to_string(),
@@ -1239,6 +1257,7 @@ impl<'a> P<'a> {
                 })
             }
             _ => Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: format!("unexpected token {:?}", tok),
                 input: self.input.to_string(),
@@ -1315,6 +1334,7 @@ impl<'a> P<'a> {
 
                 if !matches!(self.cur, Tok::In(_)) {
                     return Err(Error::Syntax {
+            filename: None,
                         pos: self.pos(),
                         msg: "expected 'in' after 'for' in list comprehension".to_string(),
                         input: self.input.to_string(),
@@ -1421,6 +1441,7 @@ impl<'a> P<'a> {
             self.consume();
         } else {
             return Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected '|' after arrow function parameters".to_string(),
                 input: self.input.to_string(),
@@ -1458,6 +1479,7 @@ impl<'a> P<'a> {
             Ok(name)
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected identifier".to_string(),
                 input: self.input.to_string(),
@@ -1471,6 +1493,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected '='".to_string(),
                 input: self.input.to_string(),
@@ -1484,6 +1507,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected '('".to_string(),
                 input: self.input.to_string(),
@@ -1497,6 +1521,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected ')'".to_string(),
                 input: self.input.to_string(),
@@ -1510,6 +1535,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected ';'".to_string(),
                 input: self.input.to_string(),
@@ -1523,6 +1549,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected '}'".to_string(),
                 input: self.input.to_string(),
@@ -1536,6 +1563,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected ':'".to_string(),
                 input: self.input.to_string(),
@@ -1549,6 +1577,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected ']'".to_string(),
                 input: self.input.to_string(),
@@ -1562,6 +1591,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected 'loop'".to_string(),
                 input: self.input.to_string(),
@@ -1575,6 +1605,7 @@ impl<'a> P<'a> {
             Ok(())
         } else {
             Err(Error::Syntax {
+            filename: None,
                 pos: self.pos(),
                 msg: "expected '=>'".to_string(),
                 input: self.input.to_string(),
