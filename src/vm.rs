@@ -13,6 +13,8 @@ pub enum Value {
     Func(CompiledFunction),
     Closure(Rc<RefCell<Closure>>),
     Builtin(fn(&mut VM, u16) -> Result<(), Error>),
+    Ref(Rc<RefCell<Value>>),
+    MutRef(Rc<RefCell<Value>>),
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +155,9 @@ impl Value {
                 buf.push(0);
             }
             Value::Builtin(_) => {
+                buf.push(0);
+            }
+            Value::Ref(_) | Value::MutRef(_) => {
                 buf.push(0);
             }
         }
@@ -743,6 +748,28 @@ impl VM {
                     self.stack.push(Value::Num(-(idx as f64 + 1.0)));
                     self.call_stack[frame_idx].ip += 3;
                 }
+                Op::Ref => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    self.stack.push(Value::Ref(Rc::new(RefCell::new(val))));
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::RefMut => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    self.stack.push(Value::MutRef(Rc::new(RefCell::new(val))));
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::Deref => {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    match val {
+                        Value::Ref(r) | Value::MutRef(r) => {
+                            self.stack.push(r.borrow().clone());
+                        }
+                        _ => {
+                            self.stack.push(val);
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
             }
         }
     }
@@ -769,6 +796,9 @@ impl VM {
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::Num(x), Value::Num(y)) => x == y,
             (Value::Str(x), Value::Str(y)) => x == y,
+            (Value::Ref(x), Value::Ref(y)) | (Value::MutRef(x), Value::MutRef(y)) => {
+                Rc::ptr_eq(x, y)
+            }
             _ => false,
         }
     }
@@ -790,6 +820,8 @@ impl fmt::Display for Value {
             Value::Func(_) => write!(f, "<function>"),
             Value::Closure(_) => write!(f, "<closure>"),
             Value::Builtin(_) => write!(f, "<builtin>"),
+            Value::Ref(r) => write!(f, "&{}", r.borrow()),
+            Value::MutRef(r) => write!(f, "&mut {}", r.borrow()),
         }
     }
 }

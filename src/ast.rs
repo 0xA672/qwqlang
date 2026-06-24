@@ -122,6 +122,9 @@ pub enum BinOp {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOp {
     Neg,
+    Ref,
+    RefMut,
+    Deref,
 }
 
 impl fmt::Display for Pos {

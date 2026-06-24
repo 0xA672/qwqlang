@@ -574,6 +574,28 @@ impl<'a> P<'a> {
                     pos,
                 })
             }
+            Tok::Ref(pos) => {
+                self.consume();
+                let is_mut = matches!(self.cur, Tok::Mut(_));
+                if is_mut {
+                    self.consume();
+                }
+                let expr = self.unary()?;
+                Ok(Expr::UnaryOp {
+                    op: if is_mut { UnaryOp::RefMut } else { UnaryOp::Ref },
+                    expr: Box::new(expr),
+                    pos,
+                })
+            }
+            Tok::Mul(pos) => {
+                self.consume();
+                let expr = self.unary()?;
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Deref,
+                    expr: Box::new(expr),
+                    pos,
+                })
+            }
             _ => self.call(),
         }
     }
@@ -886,6 +908,7 @@ impl<'a> P<'a> {
             | Tok::Comma(p)
             | Tok::LBracket(p)
             | Tok::RBracket(p)
+            | Tok::Ref(p)
             | Tok::Eof(p) => *p,
         }
     }

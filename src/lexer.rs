@@ -44,6 +44,7 @@ pub enum Tok {
     Comma(Pos),
     LBracket(Pos),
     RBracket(Pos),
+    Ref(Pos),
     Eof(Pos),
 }
 
@@ -83,6 +84,10 @@ impl<'a> Lex<'a> {
                         '-' => {
                             self.col += 1;
                             return Tok::Sub(pos);
+                        }
+                        '&' => {
+                            self.col += 1;
+                            return Tok::Ref(pos);
                         }
                         '*' => {
                             self.col += 1;

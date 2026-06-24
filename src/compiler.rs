@@ -37,6 +37,9 @@ pub enum Op {
     Return = 26,
     GetBuiltin = 27,
     CaptureGlobal = 30,
+    Ref = 31,
+    RefMut = 32,
+    Deref = 33,
 }
 
 #[derive(Debug)]
@@ -497,6 +500,9 @@ impl Comp {
                 self.expr(expr)?;
                 match op {
                     UnaryOp::Neg => self.emit_op(Op::Negate),
+                    UnaryOp::Ref => self.emit_op(Op::Ref),
+                    UnaryOp::RefMut => self.emit_op(Op::RefMut),
+                    UnaryOp::Deref => self.emit_op(Op::Deref),
                 }
             }
             Expr::Call { callee, args, .. } => {
