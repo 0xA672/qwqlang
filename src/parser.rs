@@ -675,19 +675,125 @@ impl<'a> P<'a> {
     }
 
     fn pipe(&mut self) -> Result<Expr, Error> {
-        let mut left = self.equality()?;
-        while let Tok::Pipe(pos) = self.cur.clone() {
+        // Handle nullary pipe: |> f
+        if matches!(self.cur, Tok::Pipe(_)) {
+            let pos = match &self.cur {
+                Tok::Pipe(p) => *p,
+                _ => unreachable!(),
+            };
             self.consume();
-            let right = self.equality()?;
-            let has_placeholder = self.has_placeholder(&right);
-            left = Expr::Pipe {
-                left: Box::new(left),
-                right: Box::new(right),
+            let func = self.equality()?;
+            let has_placeholder = self.has_placeholder(&func);
+
+            // Check for chained nullary pipe: |> f |> g
+            if matches!(self.cur, Tok::Pipe(_)) {
+                let first = Expr::Pipe {
+                    args: vec![],
+                    func: Box::new(func),
+                    has_placeholder,
+                    pos,
+                };
+                self.consume();
+                let remaining = self.pipe()?;
+                let remaining_has_placeholder = self.has_placeholder(&remaining);
+                return Ok(Expr::Pipe {
+                    args: vec![first],
+                    func: Box::new(remaining),
+                    has_placeholder: remaining_has_placeholder,
+                    pos: Pos { line: 1, col: 1 },
+                });
+            }
+
+            return Ok(Expr::Pipe {
+                args: vec![],
+                func: Box::new(func),
                 has_placeholder,
                 pos,
-            };
+            });
         }
-        Ok(left)
+
+        let first = self.equality()?;
+
+        match self.cur.clone() {
+            Tok::Pipe(pos) => {
+                let mut args = vec![first];
+                self.consume();
+
+                while matches!(self.cur, Tok::Comma(_)) {
+                    self.consume();
+                    args.push(self.equality()?);
+                }
+
+                let func = self.equality()?;
+                let has_placeholder = self.has_placeholder(&func);
+
+                let pipe_expr = Expr::Pipe {
+                    args,
+                    func: Box::new(func),
+                    has_placeholder,
+                    pos,
+                };
+
+                if matches!(self.cur, Tok::Pipe(_)) {
+                    self.consume();
+                    let remaining = self.pipe()?;
+                    let remaining_has_placeholder = self.has_placeholder(&remaining);
+                    return Ok(Expr::Pipe {
+                        args: vec![pipe_expr],
+                        func: Box::new(remaining),
+                        has_placeholder: remaining_has_placeholder,
+                        pos: Pos { line: 1, col: 1 },
+                    });
+                }
+
+                Ok(pipe_expr)
+            }
+            Tok::Comma(_) => {
+                let mut args = vec![first];
+                self.consume();
+                args.push(self.equality()?);
+
+                while matches!(self.cur, Tok::Comma(_)) {
+                    self.consume();
+                    args.push(self.equality()?);
+                }
+
+                if matches!(self.cur, Tok::Pipe(_)) {
+                    self.consume();
+
+                    let func = self.equality()?;
+                    let has_placeholder = self.has_placeholder(&func);
+
+                    let pipe_expr = Expr::Pipe {
+                        args,
+                        func: Box::new(func),
+                        has_placeholder,
+                        pos: Pos { line: 1, col: 1 },
+                    };
+
+                    if matches!(self.cur, Tok::Pipe(_)) {
+                        self.consume();
+                        let remaining = self.pipe()?;
+                        let remaining_has_placeholder = self.has_placeholder(&remaining);
+                        return Ok(Expr::Pipe {
+                            args: vec![pipe_expr],
+                            func: Box::new(remaining),
+                            has_placeholder: remaining_has_placeholder,
+                            pos: Pos { line: 1, col: 1 },
+                        });
+                    }
+
+                    return Ok(pipe_expr);
+                }
+
+                if args.len() == 1 {
+                    Ok(args.into_iter().next().unwrap())
+                } else {
+                    Ok(args.remove(0))
+                }
+            }
+            _ => Ok(first),
+        }
     }
 
     fn has_placeholder(&self, e: &Expr) -> bool {
@@ -697,14 +803,9 @@ impl<'a> P<'a> {
                 self.has_placeholder(left) || self.has_placeholder(right)
             }
             Expr::UnaryOp { expr, .. } => self.has_placeholder(expr),
-            Expr::Call { callee, args, .. } => {
-                self.has_placeholder(callee) || args.iter().any(|a| self.has_placeholder(a))
-            }
+            Expr::Pipe { func, .. } => self.has_placeholder(func),
             Expr::Func { body, .. } => self.has_placeholder_in_stmt(body),
             Expr::Arrow { body, .. } => self.has_placeholder(body),
-            Expr::Pipe { left, right, .. } => {
-                self.has_placeholder(left) || self.has_placeholder(right)
-            }
             Expr::TemplateStr(parts, _) => parts.iter().any(|p| {
                 if let TemplatePart::Expr(expr) = p {
                     self.has_placeholder(expr)
@@ -957,23 +1058,6 @@ impl<'a> P<'a> {
         loop {
             let tok = self.cur.clone();
             match tok {
-                Tok::LParen(pos) => {
-                    self.consume();
-                    let mut args = Vec::new();
-                    if !matches!(self.cur, Tok::RParen(_)) {
-                        args.push(self.expr()?);
-                        while let Tok::Comma(_) = self.cur.clone() {
-                            self.consume();
-                            args.push(self.expr()?);
-                        }
-                    }
-                    self.expect_rparen()?;
-                    callee = Expr::Call {
-                        callee: Box::new(callee),
-                        args,
-                        pos,
-                    };
-                }
                 Tok::LBracket(pos) => {
                     self.consume();
                     let index = self.expr()?;
@@ -996,19 +1080,11 @@ impl<'a> P<'a> {
                 Tok::DoubleColon(pos) => {
                     self.consume();
                     let variant = self.expect_ident()?;
-                    let value = if matches!(self.cur, Tok::LParen(_)) {
-                        self.consume();
-                        let v = self.expr()?;
-                        self.expect_rparen()?;
-                        Some(Box::new(v))
-                    } else {
-                        None
-                    };
                     if let Expr::Ident(name, _) = callee {
                         callee = Expr::EnumVariant {
                             enum_name: name,
                             variant,
-                            value,
+                            value: None,
                             pos,
                         };
                     } else {
@@ -1530,7 +1606,6 @@ impl ExprPos for Expr {
             | Expr::TryExpr { pos, .. }
             | Expr::BinOp { pos, .. }
             | Expr::UnaryOp { pos, .. }
-            | Expr::Call { pos, .. }
             | Expr::Func { pos, .. }
             | Expr::Arrow { pos, .. }
             | Expr::Pipe { pos, .. } => *pos,

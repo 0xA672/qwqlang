@@ -156,11 +156,6 @@ pub enum Expr {
         expr: Box<Expr>,
         pos: Pos,
     },
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-        pos: Pos,
-    },
     Func {
         params: Vec<String>,
         captures: Vec<String>,
@@ -174,8 +169,8 @@ pub enum Expr {
         pos: Pos,
     },
     Pipe {
-        left: Box<Expr>,
-        right: Box<Expr>,
+        args: Vec<Expr>,
+        func: Box<Expr>,
         has_placeholder: bool,
         pos: Pos,
     },

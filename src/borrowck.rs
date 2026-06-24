@@ -275,12 +275,6 @@ impl BorrowChecker {
                     }
                 }
             }
-            Expr::Call { callee, args, .. } => {
-                self.check_expr(callee)?;
-                for arg in args {
-                    self.check_expr(arg)?;
-                }
-            }
             Expr::Func { body, .. } => {
                 self.push_scope();
                 self.check_stmt(body)?;
@@ -289,9 +283,11 @@ impl BorrowChecker {
             Expr::Arrow { body, .. } => {
                 self.check_expr(body)?;
             }
-            Expr::Pipe { left, right, .. } => {
-                self.check_expr(left)?;
-                self.check_expr(right)?;
+            Expr::Pipe { args, func, .. } => {
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                self.check_expr(func)?;
             }
         }
         Ok(())

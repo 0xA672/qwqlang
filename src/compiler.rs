@@ -1147,13 +1147,42 @@ impl Comp {
                     UnaryOp::Deref => self.emit_op(Op::Deref),
                 }
             }
-            Expr::Call { callee, args, .. } => {
-                self.expr(callee)?;
-                for arg in args {
-                    self.expr(arg)?;
+            Expr::Pipe {
+                args,
+                func,
+                has_placeholder,
+                ..
+            } => {
+                if args.is_empty() {
+                    // Nullary call: |> f
+                    self.expr(func)?;
+                    self.emit_op(Op::Call);
+                    self.emit_u16(0);
+                } else if *has_placeholder {
+                    let func_expr = (**func).clone();
+                    let body_stmt = Stmt::Block(vec![Stmt::Return {
+                        value: Some(func_expr),
+                        pos: Pos { line: 1, col: 1 },
+                    }]);
+                    self.compile_func(
+                        &["_".to_string()],
+                        &[],
+                        &body_stmt,
+                        Pos { line: 1, col: 1 },
+                    )?;
+                    for arg in args {
+                        self.expr(arg)?;
+                    }
+                    self.emit_op(Op::Call);
+                    self.emit_u16(args.len() as u16);
+                } else {
+                    self.expr(func)?;
+                    for arg in args {
+                        self.expr(arg)?;
+                    }
+                    self.emit_op(Op::Call);
+                    self.emit_u16(args.len() as u16);
                 }
-                self.emit_op(Op::Call);
-                self.emit_u16(args.len() as u16);
             }
             Expr::Func {
                 params,
@@ -1187,34 +1216,6 @@ impl Comp {
                     }]);
                     self.compile_func(params, &[], &body_stmt, Pos { line: 1, col: 1 })?;
                 }
-            }
-            Expr::Pipe {
-                left,
-                right,
-                has_placeholder,
-                ..
-            } => {
-                if *has_placeholder {
-                    #[cfg(debug_assertions)]
-                    eprintln!("DEBUG: Compiling pipe with placeholder");
-                    let right_expr = (**right).clone();
-                    let body_stmt = Stmt::Block(vec![Stmt::Return {
-                        value: Some(right_expr),
-                        pos: Pos { line: 1, col: 1 },
-                    }]);
-                    self.compile_func(
-                        &["_".to_string()],
-                        &[],
-                        &body_stmt,
-                        Pos { line: 1, col: 1 },
-                    )?;
-                    self.expr(left)?;
-                } else {
-                    self.expr(right)?;
-                    self.expr(left)?;
-                }
-                self.emit_op(Op::Call);
-                self.emit_u16(1);
             }
         }
         Ok(())
@@ -1546,11 +1547,11 @@ impl Comp {
                 self.find_used_vars_in_expr(right, vars);
             }
             Expr::UnaryOp { expr, .. } => self.find_used_vars_in_expr(expr, vars),
-            Expr::Call { callee, args, .. } => {
-                self.find_used_vars_in_expr(callee, vars);
+            Expr::Pipe { args, func, .. } => {
                 for arg in args {
                     self.find_used_vars_in_expr(arg, vars);
                 }
+                self.find_used_vars_in_expr(func, vars);
             }
             Expr::Func { body, .. } => self.find_used_vars(body, vars),
             Expr::Arrow { body, is_block, .. } => {
@@ -1564,10 +1565,6 @@ impl Comp {
                 } else {
                     self.find_used_vars_in_expr(body, vars);
                 }
-            }
-            Expr::Pipe { left, right, .. } => {
-                self.find_used_vars_in_expr(left, vars);
-                self.find_used_vars_in_expr(right, vars);
             }
             _ => {}
         }
