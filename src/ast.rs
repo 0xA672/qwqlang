@@ -109,6 +109,12 @@ pub enum Expr {
     TemplateStr(Vec<TemplatePart>, Pos),
     Ident(String, Pos),
     Array(Vec<Expr>, Pos),
+    ListComp {
+        element: Box<Expr>,
+        var: String,
+        iterable: Box<Expr>,
+        pos: Pos,
+    },
     Index {
         object: Box<Expr>,
         index: Box<Expr>,

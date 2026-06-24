@@ -289,6 +289,10 @@ impl BorrowChecker {
                 }
                 self.check_expr(func)?;
             }
+            Expr::ListComp { element, iterable, .. } => {
+                self.check_expr(element)?;
+                self.check_expr(iterable)?;
+            }
         }
         Ok(())
     }

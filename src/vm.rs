@@ -1352,6 +1352,291 @@ impl VM {
                     }
                     self.call_stack[frame_idx].ip += 1;
                 }
+                Op::ListComp => {
+                    let func_idx = self.read_u16(&bytecode, ip + 1) as usize;
+                    let iterable = self.stack.pop().unwrap_or(Value::Null);
+                    let array = match iterable {
+                        Value::Array(arr) => arr,
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "list comprehension requires an array".to_string(),
+                            })
+                        }
+                    };
+                    let elements = array.borrow().clone();
+                    let mut result = Vec::new();
+                    let func_val = closure.borrow().func.constants[func_idx].clone();
+
+                    for elem in &elements {
+                        let func = match &func_val {
+                            Value::Func(f) => {
+                                let num_free = f.num_free as usize;
+                                let mut upvalues = Vec::with_capacity(num_free);
+                                for _ in 0..num_free {
+                                    let uv_val = self.stack.pop().unwrap_or(Value::Null);
+                                    if let Value::Num(n) = uv_val {
+                                        if n < 0.0 {
+                                            let global_idx = -(n + 1.0) as usize;
+                                            upvalues.push(Upvalue::Global(global_idx));
+                                        } else {
+                                            upvalues.push(Upvalue::Closed(uv_val));
+                                        }
+                                    } else {
+                                        upvalues.push(Upvalue::Closed(uv_val));
+                                    }
+                                }
+                                upvalues.reverse();
+                                Rc::new(RefCell::new(Closure {
+                                    func: f.clone(),
+                                    upvalues,
+                                }))
+                            }
+                            Value::Closure(c) => c.clone(),
+                            _ => {
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: "expected function in list comprehension".to_string(),
+                                })
+                            }
+                        };
+
+                        if func.borrow().func.num_params != 1 {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "list comprehension function expects 1 argument".to_string(),
+                            });
+                        }
+
+                        let new_bp = self.stack.len();
+                        self.stack.push(elem.clone());
+                        let num_locals = func.borrow().func.num_locals as usize;
+                        self.stack.resize(new_bp + num_locals, Value::Null);
+
+                        self.call_stack.push(Frame {
+                            closure: func.clone(),
+                            ip: 0,
+                            bp: new_bp,
+                        });
+
+                        loop {
+                            let fi = self.call_stack.len() - 1;
+                            let fip = self.call_stack[fi].ip;
+                            let fclosure = self.call_stack[fi].closure.clone();
+                            let fbp = self.call_stack[fi].bp;
+                            let fbytecode = fclosure.borrow().func.bytecode.clone();
+
+                            if fip >= fbytecode.len() {
+                                let val = Value::Null;
+                                self.stack.truncate(fbp);
+                                self.call_stack.pop();
+                                self.stack.push(val);
+                                break;
+                            }
+
+                            let fop = unsafe { std::mem::transmute::<u8, Op>(fbytecode[fip]) };
+
+                            match fop {
+                                Op::Return => {
+                                    let val = self.stack.pop().unwrap_or(Value::Null);
+                                    let frame = self.call_stack.pop().unwrap();
+                                    self.stack.truncate(frame.bp);
+                                    self.stack.push(val);
+                                    break;
+                                }
+                                Op::Constant => {
+                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let val = fclosure.borrow().func.constants[idx as usize].clone();
+                                    self.stack.push(val);
+                                    self.call_stack[fi].ip += 3;
+                                }
+                                Op::GetLocal => {
+                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let stack_idx = fbp + idx as usize;
+                                    self.stack.push(self.stack[stack_idx].clone());
+                                    self.call_stack[fi].ip += 3;
+                                }
+                                Op::SetLocal => {
+                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let val = self.stack.pop().unwrap_or(Value::Null);
+                                    let stack_idx = fbp + idx as usize;
+                                    self.stack[stack_idx] = val;
+                                    self.call_stack[fi].ip += 3;
+                                }
+                                Op::Null => {
+                                    self.stack.push(Value::Null);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::True => {
+                                    self.stack.push(Value::Bool(true));
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::False => {
+                                    self.stack.push(Value::Bool(false));
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Negate => {
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    match a {
+                                        Value::Num(x) => self.stack.push(Value::Num(-x)),
+                                        _ => self.stack.push(Value::Null),
+                                    }
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Add => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    let res = match (a, b) {
+                                        (Value::Num(x), Value::Num(y)) => Value::Num(x + y),
+                                        (Value::Str(x), Value::Str(y)) => Value::Str(format!("{}{}", x, y)),
+                                        _ => Value::Null,
+                                    };
+                                    self.stack.push(res);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Sub => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    let res = match (a, b) {
+                                        (Value::Num(x), Value::Num(y)) => Value::Num(x - y),
+                                        _ => Value::Null,
+                                    };
+                                    self.stack.push(res);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Mul => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    let res = match (a, b) {
+                                        (Value::Num(x), Value::Num(y)) => Value::Num(x * y),
+                                        _ => Value::Null,
+                                    };
+                                    self.stack.push(res);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Div => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    let res = match (a, b) {
+                                        (Value::Num(x), Value::Num(y)) => {
+                                            if y == 0.0 { Value::Null } else { Value::Num(x / y) }
+                                        }
+                                        _ => Value::Null,
+                                    };
+                                    self.stack.push(res);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Pop => {
+                                    self.stack.pop();
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Eq => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    self.stack.push(Value::Bool(self.values_eq(&a, &b)));
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Neq => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    self.stack.push(Value::Bool(!self.values_eq(&a, &b)));
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Lt => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    let res = match (a, b) {
+                                        (Value::Num(x), Value::Num(y)) => Value::Bool(x < y),
+                                        _ => Value::Bool(false),
+                                    };
+                                    self.stack.push(res);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Gt => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    let res = match (a, b) {
+                                        (Value::Num(x), Value::Num(y)) => Value::Bool(x > y),
+                                        _ => Value::Bool(false),
+                                    };
+                                    self.stack.push(res);
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::GetField => {
+                                    let field = self.stack.pop().unwrap_or(Value::Null);
+                                    let object = self.stack.pop().unwrap_or(Value::Null);
+                                    if let (Value::Object(obj), Value::Str(field_name)) = (object, field) {
+                                        let map = obj.borrow();
+                                        if let Some(value) = map.get(&field_name) {
+                                            self.stack.push(value.clone());
+                                        } else {
+                                            self.stack.push(Value::Null);
+                                        }
+                                    } else {
+                                        self.stack.push(Value::Null);
+                                    }
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::Index => {
+                                    let index = self.stack.pop().unwrap_or(Value::Null);
+                                    let object = self.stack.pop().unwrap_or(Value::Null);
+                                    match (object, index) {
+                                        (Value::Array(arr), Value::Num(idx)) => {
+                                            let idx = idx as usize;
+                                            let elems = arr.borrow();
+                                            if idx < elems.len() {
+                                                self.stack.push(elems[idx].clone());
+                                            } else {
+                                                self.stack.push(Value::Null);
+                                            }
+                                        }
+                                        _ => self.stack.push(Value::Null),
+                                    }
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                Op::GetFree => {
+                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let upvalues = &fclosure.borrow().upvalues;
+                                    if idx as usize >= upvalues.len() {
+                                        self.stack.push(Value::Null);
+                                    } else {
+                                        let val = match &upvalues[idx as usize] {
+                                            Upvalue::Open(slot) => self.stack[*slot].clone(),
+                                            Upvalue::Closed(val) => val.clone(),
+                                            Upvalue::Global(global_idx) => self.globals[*global_idx].clone(),
+                                        };
+                                        self.stack.push(val);
+                                    }
+                                    self.call_stack[fi].ip += 3;
+                                }
+                                Op::CaptureGlobal => {
+                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    self.stack.push(Value::Num(-(idx as f64 + 1.0)));
+                                    self.call_stack[fi].ip += 3;
+                                }
+                                Op::Concat => {
+                                    let b = self.stack.pop().unwrap_or(Value::Null);
+                                    let a = self.stack.pop().unwrap_or(Value::Null);
+                                    match (a, b) {
+                                        (Value::Str(x), Value::Str(y)) => {
+                                            self.stack.push(Value::Str(format!("{}{}", x, y)));
+                                        }
+                                        _ => self.stack.push(Value::Null),
+                                    }
+                                    self.call_stack[fi].ip += 1;
+                                }
+                                _ => {
+                                    self.call_stack[fi].ip += 1;
+                                }
+                            }
+                        }
+
+                        let res = self.stack.pop().unwrap_or(Value::Null);
+                        result.push(res);
+                    }
+                    self.stack.push(Value::Array(Rc::new(RefCell::new(result))));
+                    self.call_stack[frame_idx].ip += 3;
+                }
             }
         }
     }

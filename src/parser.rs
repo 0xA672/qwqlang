@@ -1305,16 +1305,45 @@ impl<'a> P<'a> {
     fn array_literal(&mut self) -> Result<Expr, Error> {
         let pos = self.pos();
         self.consume();
-        let mut elements = Vec::new();
+
         if !matches!(self.cur, Tok::RBracket(_)) {
-            elements.push(self.expr()?);
+            let first_expr = self.expr()?;
+
+            if matches!(self.cur, Tok::For(_)) {
+                self.consume();
+                let var = self.expect_ident()?;
+
+                if !matches!(self.cur, Tok::In(_)) {
+                    return Err(Error::Syntax {
+                        pos: self.pos(),
+                        msg: "expected 'in' after 'for' in list comprehension".to_string(),
+                        input: self.input.to_string(),
+                    });
+                }
+                self.consume();
+                let iterable = self.expr()?;
+
+                self.expect_rbracket()?;
+
+                return Ok(Expr::ListComp {
+                    element: Box::new(first_expr),
+                    var,
+                    iterable: Box::new(iterable),
+                    pos,
+                });
+            }
+
+            let mut elements = vec![first_expr];
             while matches!(self.cur, Tok::Comma(_)) {
                 self.consume();
                 elements.push(self.expr()?);
             }
+            self.expect_rbracket()?;
+            return Ok(Expr::Array(elements, pos));
         }
+
         self.expect_rbracket()?;
-        Ok(Expr::Array(elements, pos))
+        Ok(Expr::Array(Vec::new(), pos))
     }
 
     fn object_literal(&mut self) -> Result<Expr, Error> {
@@ -1655,7 +1684,8 @@ impl ExprPos for Expr {
             | Expr::UnaryOp { pos, .. }
             | Expr::Func { pos, .. }
             | Expr::Arrow { pos, .. }
-            | Expr::Pipe { pos, .. } => *pos,
+            | Expr::Pipe { pos, .. }
+            | Expr::ListComp { pos, .. } => *pos,
         }
     }
 }

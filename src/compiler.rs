@@ -65,6 +65,7 @@ pub enum Op {
     PopTry = 54,
     // String operations
     Concat = 55,
+    ListComp = 56,
 }
 
 #[derive(Debug)]
@@ -664,6 +665,12 @@ impl Comp {
                 }
                 self.emit_op(Op::Array);
                 self.emit_u16(elements.len() as u16);
+            }
+            Expr::ListComp { element, var, iterable, .. } => {
+                self.expr(iterable)?;
+                let elem_func = self.create_listcomp_func(var, element)?;
+                self.emit_op(Op::ListComp);
+                self.emit_u16(elem_func as u16);
             }
             Expr::Index { object, index, .. } => {
                 self.expr(object)?;
@@ -1346,6 +1353,75 @@ impl Comp {
         Ok(())
     }
 
+    fn create_listcomp_func(&mut self, var: &str, element: &Expr) -> Result<usize, Error> {
+        let saved_locals = self.locals.clone();
+        let saved_free = self.free.clone();
+        let saved_loop_stack = self.loop_stack.clone();
+
+        self.locals = Vec::new();
+        self.free = Vec::new();
+        self.loop_stack = Vec::new();
+
+        self.locals.push((var.to_string(), false));
+
+        let mut vars_used = HashSet::new();
+        self.find_used_vars_in_expr(element, &mut vars_used);
+
+        for var_name in &vars_used {
+            if var_name == var {
+                continue;
+            }
+            if let Some((is_mut, _)) = self.find_var(var_name, &saved_locals, &saved_free) {
+                self.free.push((var_name.clone(), is_mut));
+            }
+        }
+
+        self.func_stack.push(FuncCtx {
+            locals: saved_locals.clone(),
+            free: saved_free.clone(),
+            captures: HashSet::new(),
+        });
+
+        let saved_bytecode = std::mem::take(&mut self.bytecode);
+
+        self.expr(element)?;
+        self.emit_op(Op::Return);
+
+        let func_bytecode = std::mem::take(&mut self.bytecode);
+        self.bytecode = saved_bytecode;
+
+        let func = CompiledFunction {
+            bytecode: func_bytecode,
+            constants: self.constants.clone(),
+            num_locals: self.locals.len() as u16,
+            num_params: 1,
+            num_free: self.free.len() as u16,
+        };
+
+        let func_idx = self.add_constant(Value::Func(func));
+
+        let free_names: Vec<String> = self.free.iter().map(|(n, _)| n.clone()).collect();
+        for name in &free_names {
+            if let Some(idx) = saved_locals.iter().position(|(n, _)| n == name) {
+                self.emit_op(Op::GetLocal);
+                self.emit_u16(idx as u16);
+            } else if let Some(idx) = saved_free.iter().position(|(n, _)| n == name) {
+                self.emit_op(Op::GetFree);
+                self.emit_u16(idx as u16);
+            } else if let Some(&(idx, _)) = self.globals.get(name) {
+                self.emit_op(Op::CaptureGlobal);
+                self.emit_u16(idx as u16);
+            }
+        }
+
+        self.locals = saved_locals;
+        self.free = saved_free;
+        self.loop_stack = saved_loop_stack;
+        self.func_stack.pop();
+
+        Ok(func_idx)
+    }
+
     fn find_var(
         &self,
         name: &str,
@@ -1504,6 +1580,10 @@ impl Comp {
                 for elem in elements {
                     self.find_used_vars_in_expr(elem, vars);
                 }
+            }
+            Expr::ListComp { element, iterable, .. } => {
+                self.find_used_vars_in_expr(element, vars);
+                self.find_used_vars_in_expr(iterable, vars);
             }
             Expr::Index { object, index, .. } => {
                 self.find_used_vars_in_expr(object, vars);
