@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, Pos, Stmt, UnaryOp};
+use crate::ast::{BinOp, Expr, Pattern, Pos, Stmt, UnaryOp};
 use crate::error::{levenshtein, Error};
 use crate::vm::{CompiledFunction, Value};
 use std::collections::{HashMap, HashSet};
@@ -40,6 +40,15 @@ pub enum Op {
     Ref = 31,
     RefMut = 32,
     Deref = 33,
+    Array = 34,
+    Object = 35,
+    Index = 36,
+    IndexSet = 37,
+    GetField = 38,
+    SetField = 39,
+    EnumVariant = 40,
+    IsEnumVariant = 41,
+    GetEnumValue = 42,
 }
 
 #[derive(Debug)]
@@ -50,7 +59,7 @@ pub struct Comp {
     builtins: HashMap<String, usize>,
     locals: Vec<(String, bool)>,
     free: Vec<(String, bool)>,
-    loop_stack: Vec<(usize, Option<String>, Vec<(usize, bool)>)>,
+    loop_stack: Vec<(usize, Option<String>, Vec<(usize, bool)>, Vec<usize>)>,
     func_stack: Vec<FuncCtx>,
     next_global: usize,
 }
@@ -66,6 +75,9 @@ impl Comp {
     pub fn new() -> Self {
         let mut builtins = HashMap::new();
         builtins.insert("print".to_string(), 0);
+        builtins.insert("len".to_string(), 1);
+        builtins.insert("push".to_string(), 2);
+        builtins.insert("pop".to_string(), 3);
         let mut globals = HashMap::new();
         globals.insert("print".to_string(), (0, false));
         Comp {
@@ -226,7 +238,7 @@ impl Comp {
             Stmt::Loop { label, body, .. } => {
                 let loop_start = self.bytecode.len();
                 self.loop_stack
-                    .push((loop_start, label.clone(), Vec::new()));
+                    .push((loop_start, label.clone(), Vec::new(), Vec::new()));
                 self.stmt(body)?;
                 let jump_pos = self.bytecode.len();
                 self.emit_op(Op::Jump);
@@ -237,8 +249,10 @@ impl Comp {
                 self.emit_op(Op::Null);
                 let loop_end = self.bytecode.len();
 
+                self.patch_continue_jumps(loop_end);
+
                 let mut any_break_has_value = false;
-                if let Some((_, _, break_positions)) = self.loop_stack.last() {
+                if let Some((_, _, break_positions, _)) = self.loop_stack.last() {
                     let break_positions = break_positions.clone();
                     for (pos, has_value) in &break_positions {
                         if *has_value {
@@ -264,10 +278,10 @@ impl Comp {
                     self.bytecode.truncate(pre_cleanup_len);
                 }
             }
-            Stmt::While { cond, body, pos } => {
+            Stmt::While { cond, body, .. } => {
                 let cond_pos = self.bytecode.len();
                 self.loop_stack
-                    .push((cond_pos, None, Vec::new()));
+                    .push((cond_pos, None, Vec::new(), Vec::new()));
                 self.expr(cond)?;
                 let jump_to_end = self.emit_jump_if_false();
                 self.stmt(body)?;
@@ -281,8 +295,10 @@ impl Comp {
                 self.emit_op(Op::Null);
                 let loop_end = self.bytecode.len();
 
+                self.patch_continue_jumps(loop_end);
+
                 let mut any_break_has_value = false;
-                if let Some((_, _, break_positions)) = self.loop_stack.last() {
+                if let Some((_, _, break_positions, _)) = self.loop_stack.last() {
                     let break_positions = break_positions.clone();
                     for (break_pos, has_value) in &break_positions {
                         if *has_value {
@@ -313,12 +329,12 @@ impl Comp {
                 }
                 let cond_pos = self.bytecode.len();
                 self.loop_stack
-                    .push((cond_pos, None, Vec::new()));
+                    .push((cond_pos, None, Vec::new(), Vec::new()));
                 if let Some(cond) = cond {
                     self.expr(cond)?;
                     let jump_to_end = self.emit_jump_if_false();
                     self.stmt(body)?;
-                    let update_pos = self.bytecode.len();
+                    let _update_pos = self.bytecode.len();
                     if let Some(update) = update {
                         self.expr(update)?;
                         self.emit_op(Op::Pop);
@@ -333,8 +349,10 @@ impl Comp {
                     self.emit_op(Op::Null);
                     let loop_end = self.bytecode.len();
 
+                    self.patch_continue_jumps(loop_end);
+
                     let mut any_break_has_value = false;
-                    if let Some((_, _, break_positions)) = self.loop_stack.last() {
+                    if let Some((_, _, break_positions, _)) = self.loop_stack.last() {
                         let break_positions = break_positions.clone();
                         for (pos, has_value) in &break_positions {
                             if *has_value {
@@ -359,7 +377,7 @@ impl Comp {
                     }
                 } else {
                     self.stmt(body)?;
-                    let update_pos = self.bytecode.len();
+                    let _update_pos = self.bytecode.len();
                     if let Some(update) = update {
                         self.expr(update)?;
                         self.emit_op(Op::Pop);
@@ -375,7 +393,7 @@ impl Comp {
                 let loop_idx = if let Some(label) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, l, _)| l.as_deref() == Some(label))
+                        .rposition(|(_, l, _, _)| l.as_deref() == Some(label))
                         .ok_or_else(|| Error::Compile {
                             pos: *pos,
                             msg: format!("undefined label '{}'", label),
@@ -400,6 +418,116 @@ impl Comp {
                 let break_pos = self.bytecode.len();
                 self.emit_i16(0);
                 self.loop_stack[loop_idx].2.push((break_pos, has_value));
+            }
+            Stmt::Continue { label, pos } => {
+                let loop_idx = if let Some(label) = label {
+                    self.loop_stack
+                        .iter()
+                        .rposition(|(_, l, _, _)| l.as_deref() == Some(label))
+                        .ok_or_else(|| Error::Compile {
+                            pos: *pos,
+                            msg: format!("undefined label '{}'", label),
+                        })?
+                } else {
+                    self.loop_stack
+                        .len()
+                        .checked_sub(1)
+                        .ok_or_else(|| Error::Compile {
+                            pos: *pos,
+                            msg: "continue outside loop".to_string(),
+                        })?
+                };
+
+                self.emit_op(Op::Jump);
+                let continue_pos = self.bytecode.len();
+                self.emit_i16(0);
+                self.loop_stack[loop_idx].3.push(continue_pos);
+            }
+            Stmt::ForIn { var, iterable, body, pos } => {
+                let arr_ident = format!("__arr_{}", pos.line);
+                let idx_ident = format!("__idx_{}", pos.line);
+
+                self.stmt(&Stmt::Let {
+                    name: arr_ident.clone(),
+                    init: iterable.clone(),
+                    pos: *pos,
+                })?;
+                self.stmt(&Stmt::Let {
+                    name: idx_ident.clone(),
+                    init: Expr::Num(0.0, *pos),
+                    pos: *pos,
+                })?;
+
+                let loop_start = self.bytecode.len();
+                self.loop_stack
+                    .push((loop_start, None, Vec::new(), Vec::new()));
+
+                self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
+                self.expr(&Expr::Ident(arr_ident.clone(), *pos))?;
+                self.emit_op(Op::Index);
+                self.stmt(&Stmt::Let {
+                    name: var.clone(),
+                    init: Expr::Null(*pos),
+                    pos: *pos,
+                })?;
+
+                self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
+                self.expr(&Expr::Ident(arr_ident.clone(), *pos))?;
+                self.emit_op(Op::Index);
+
+                let continue_check = self.emit_jump_if_false();
+
+                self.stmt(body)?;
+
+                let update_pos = self.bytecode.len();
+                self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
+                self.emit_op(Op::Constant);
+                let const_idx = self.add_constant(Value::Num(1.0));
+                self.emit_u16(const_idx as u16);
+                self.emit_op(Op::Add);
+                self.stmt(&Stmt::Assign {
+                    name: idx_ident.clone(),
+                    value: Expr::Ident(idx_ident.clone(), *pos),
+                    pos: *pos,
+                })?;
+
+                let jump_back = self.bytecode.len();
+                self.emit_op(Op::Jump);
+                let offset = loop_start as i16 - jump_back as i16;
+                self.emit_i16(offset);
+
+                let pre_cleanup_len = self.bytecode.len();
+                self.patch_jump(continue_check);
+                self.emit_op(Op::Pop);
+                self.emit_op(Op::Null);
+
+                self.patch_continue_jumps(loop_start);
+
+                let mut any_break_has_value = false;
+                if let Some((_, _, break_positions, _)) = self.loop_stack.last() {
+                    let break_positions = break_positions.clone();
+                    for (break_pos, has_value) in &break_positions {
+                        if *has_value {
+                            any_break_has_value = true;
+                            let target = self.bytecode.len();
+                            let jump_instr_pos = (*break_pos - 1) as i16;
+                            let offset = target as i16 - jump_instr_pos;
+                            self.bytecode[*break_pos] = (offset & 0xff) as u8;
+                            self.bytecode[*break_pos + 1] = ((offset >> 8) & 0xff) as u8;
+                        } else {
+                            let target = pre_cleanup_len as i16;
+                            let jump_instr_pos = (*break_pos - 1) as i16;
+                            let offset = target - jump_instr_pos;
+                            self.bytecode[*break_pos] = (offset & 0xff) as u8;
+                            self.bytecode[*break_pos + 1] = ((offset >> 8) & 0xff) as u8;
+                        }
+                    }
+                }
+
+                if any_break_has_value {
+                    self.bytecode.truncate(pre_cleanup_len);
+                }
+                self.loop_stack.pop();
             }
             Stmt::Return { value, .. } => {
                 if let Some(value) = value {
@@ -435,6 +563,109 @@ impl Comp {
                 let idx = self.add_constant(Value::Str(s.clone()));
                 self.emit_op(Op::Constant);
                 self.emit_u16(idx as u16);
+            }
+            Expr::Array(elements, _) => {
+                for elem in elements {
+                    self.expr(elem)?;
+                }
+                self.emit_op(Op::Array);
+                self.emit_u16(elements.len() as u16);
+            }
+            Expr::Index { object, index, .. } => {
+                self.expr(object)?;
+                self.expr(index)?;
+                self.emit_op(Op::Index);
+            }
+            Expr::Object(fields, _) => {
+                for (name, value) in fields {
+                    let name_idx = self.add_constant(Value::Str(name.clone()));
+                    self.emit_op(Op::Constant);
+                    self.emit_u16(name_idx as u16);
+                    self.expr(value)?;
+                }
+                self.emit_op(Op::Object);
+                self.emit_u16(fields.len() as u16);
+            }
+            Expr::Field { object, field, .. } => {
+                self.expr(object)?;
+                let field_idx = self.add_constant(Value::Str(field.clone()));
+                self.emit_op(Op::Constant);
+                self.emit_u16(field_idx as u16);
+                self.emit_op(Op::GetField);
+            }
+            Expr::EnumVariant { enum_name, variant, value, .. } => {
+                let enum_idx = self.add_constant(Value::Str(enum_name.clone()));
+                let variant_idx = self.add_constant(Value::Str(variant.clone()));
+                self.emit_op(Op::Constant);
+                self.emit_u16(enum_idx as u16);
+                self.emit_op(Op::Constant);
+                self.emit_u16(variant_idx as u16);
+                if let Some(val) = value {
+                    self.expr(val)?;
+                } else {
+                    self.emit_op(Op::Null);
+                }
+                self.emit_op(Op::EnumVariant);
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.expr(expr)?;
+                let mut end_jumps = Vec::new();
+                for (pattern, arm_expr) in arms {
+                    match pattern {
+                        Pattern::Literal(lit) => {
+                            let lit_end = self.emit_jump_if_false();
+                            self.expr(lit)?;
+                            self.emit_op(Op::Eq);
+                            let arm_jump = self.emit_jump();
+                            self.patch_jump(lit_end);
+                            self.emit_op(Op::Pop);
+                            self.expr(arm_expr)?;
+                            end_jumps.push(arm_jump);
+                        }
+                        Pattern::Wildcard => {
+                            self.expr(arm_expr)?;
+                            end_jumps.push(self.emit_jump());
+                        }
+                        Pattern::Ident(name) => {
+                            self.emit_op(Op::Pop);
+                            self.stmt(&Stmt::Let {
+                                name: name.clone(),
+                                init: Expr::Null(Pos { line: 1, col: 1 }),
+                                pos: Pos { line: 1, col: 1 },
+                            })?;
+                            self.expr(arm_expr)?;
+                            end_jumps.push(self.emit_jump());
+                        }
+                        Pattern::EnumVariant { enum_name, variant, binding } => {
+                            self.emit_op(Op::Constant);
+                            let enum_idx = self.add_constant(Value::Str(enum_name.clone()));
+                            self.emit_u16(enum_idx as u16);
+                            self.emit_op(Op::Constant);
+                            let variant_idx = self.add_constant(Value::Str(variant.clone()));
+                            self.emit_u16(variant_idx as u16);
+                            self.emit_op(Op::IsEnumVariant);
+                            let variant_jump = self.emit_jump_if_false();
+
+                            if let Some(binding_name) = binding {
+                                self.emit_op(Op::Pop);
+                                self.stmt(&Stmt::Let {
+                                    name: binding_name.clone(),
+                                    init: Expr::Null(Pos { line: 1, col: 1 }),
+                                    pos: Pos { line: 1, col: 1 },
+                                })?;
+                            } else {
+                                self.emit_op(Op::Pop);
+                            }
+                            self.expr(arm_expr)?;
+                            end_jumps.push(self.emit_jump());
+                            self.patch_jump(variant_jump);
+                        }
+                    }
+                }
+                for j in end_jumps {
+                    self.patch_jump(j);
+                }
+                self.emit_op(Op::Pop);
             }
             Expr::Ident(name, pos) => {
                 #[cfg(debug_assertions)]
@@ -489,6 +720,20 @@ impl Comp {
                         } else {
                             return self.undefined_var_error(name, *pos);
                         }
+                        return Ok(());
+                    } else if let Expr::Index { object, index, .. } = &**left {
+                        self.expr(object)?;
+                        self.expr(index)?;
+                        self.expr(right)?;
+                        self.emit_op(Op::IndexSet);
+                        return Ok(());
+                    } else if let Expr::Field { object, field, .. } = &**left {
+                        self.expr(object)?;
+                        let field_idx = self.add_constant(Value::Str(field.clone()));
+                        self.emit_op(Op::Constant);
+                        self.emit_u16(field_idx as u16);
+                        self.expr(right)?;
+                        self.emit_op(Op::SetField);
                         return Ok(());
                     }
                 }
@@ -797,11 +1042,16 @@ impl Comp {
                 }
                 self.find_used_vars(body, vars);
             }
+            Stmt::ForIn { iterable, body, .. } => {
+                self.find_used_vars_in_expr(iterable, vars);
+                self.find_used_vars(body, vars);
+            }
             Stmt::Break { value, .. } => {
                 if let Some(v) = value {
                     self.find_used_vars_in_expr(v, vars);
                 }
             }
+            Stmt::Continue { .. } => {}
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
                     self.find_used_vars_in_expr(v, vars);
@@ -875,6 +1125,10 @@ impl Comp {
                 if let Some(init) = init {
                     self.find_declared_vars(init, declared);
                 }
+                self.find_declared_vars(body, declared);
+            }
+            Stmt::ForIn { var, body, .. } => {
+                declared.insert(var.clone());
                 self.find_declared_vars(body, declared);
             }
             _ => {}
@@ -954,6 +1208,18 @@ impl Comp {
         }
         self.bytecode[pos] = (offset & 0xff) as u8;
         self.bytecode[pos + 1] = ((offset >> 8) & 0xff) as u8;
+    }
+
+    fn patch_continue_jumps(&mut self, target: usize) {
+        if let Some((_, _, _, continue_positions)) = self.loop_stack.last() {
+            let continue_positions = continue_positions.clone();
+            for pos in continue_positions {
+                let jump_instr_pos = (pos - 1) as i16;
+                let offset = target as i16 - jump_instr_pos;
+                self.bytecode[pos] = (offset & 0xff) as u8;
+                self.bytecode[pos + 1] = ((offset >> 8) & 0xff) as u8;
+            }
+        }
     }
 
     fn undefined_var_error(&mut self, name: &str, pos: Pos) -> Result<(), Error> {

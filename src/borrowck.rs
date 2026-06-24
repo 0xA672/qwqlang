@@ -161,11 +161,19 @@ impl BorrowChecker {
                 self.check_stmt(body)?;
                 self.pop_scope();
             }
+            Stmt::ForIn { var, iterable, body, .. } => {
+                self.push_scope();
+                self.check_expr(iterable)?;
+                self.declare_var(var, false);
+                self.check_stmt(body)?;
+                self.pop_scope();
+            }
             Stmt::Break { value, .. } => {
                 if let Some(value) = value {
                     self.check_expr(value)?;
                 }
             }
+            Stmt::Continue { .. } => {}
             Stmt::Return { value, .. } => {
                 if let Some(value) = value {
                     self.check_expr(value)?;
@@ -183,9 +191,29 @@ impl BorrowChecker {
             Expr::Null(_)
             | Expr::Bool(_, _)
             | Expr::Num(_, _)
-            | Expr::Str(_, _) => {}
+            | Expr::Str(_, _)
+            | Expr::Array(_, _)
+            | Expr::Object(_, _) => {}
             Expr::Ident(name, pos) => {
                 self.check_read_access(name, *pos)?;
+            }
+            Expr::Index { object, index, .. } => {
+                self.check_expr(object)?;
+                self.check_expr(index)?;
+            }
+            Expr::Field { object, .. } => {
+                self.check_expr(object)?;
+            }
+            Expr::EnumVariant { value, .. } => {
+                if let Some(value) = value {
+                    self.check_expr(value)?;
+                }
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.check_expr(expr)?;
+                for (_, arm_expr) in arms {
+                    self.check_expr(arm_expr)?;
+                }
             }
             Expr::BinOp { left, right, .. } => {
                 self.check_expr(left)?;

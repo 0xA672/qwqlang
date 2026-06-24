@@ -47,9 +47,19 @@ pub enum Stmt {
         body: Box<Stmt>,
         pos: Pos,
     },
+    ForIn {
+        var: String,
+        iterable: Expr,
+        body: Box<Stmt>,
+        pos: Pos,
+    },
     Break {
         label: Option<String>,
         value: Option<Expr>,
+        pos: Pos,
+    },
+    Continue {
+        label: Option<String>,
         pos: Pos,
     },
     Return {
@@ -66,6 +76,29 @@ pub enum Expr {
     Num(f64, Pos),
     Str(String, Pos),
     Ident(String, Pos),
+    Array(Vec<Expr>, Pos),
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        pos: Pos,
+    },
+    Object(Vec<(String, Expr)>, Pos),
+    Field {
+        object: Box<Expr>,
+        field: String,
+        pos: Pos,
+    },
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        value: Option<Box<Expr>>,
+        pos: Pos,
+    },
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<(Pattern, Expr)>,
+        pos: Pos,
+    },
     BinOp {
         op: BinOp,
         left: Box<Expr>,
@@ -99,6 +132,18 @@ pub enum Expr {
         right: Box<Expr>,
         has_placeholder: bool,
         pos: Pos,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Literal(Expr),
+    Wildcard,
+    Ident(String),
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        binding: Option<String>,
     },
 }
 

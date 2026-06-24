@@ -1,6 +1,7 @@
 use crate::compiler::Op;
 use crate::error::Error;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -10,6 +11,13 @@ pub enum Value {
     Bool(bool),
     Num(f64),
     Str(String),
+    Array(Rc<RefCell<Vec<Value>>>),
+    Object(Rc<RefCell<HashMap<String, Value>>>),
+    Enum {
+        enum_name: String,
+        variant: String,
+        value: Option<Box<Value>>,
+    },
     Func(CompiledFunction),
     Closure(Rc<RefCell<Closure>>),
     Builtin(fn(&mut VM, u16) -> Result<(), Error>),
@@ -157,6 +165,40 @@ impl Value {
             Value::Builtin(_) => {
                 buf.push(0);
             }
+            Value::Array(arr) => {
+                buf.push(5);
+                let elements = arr.borrow();
+                buf.extend_from_slice(&(elements.len() as u32).to_le_bytes());
+                for elem in elements.iter() {
+                    elem.serialize_into(buf);
+                }
+            }
+            Value::Object(obj) => {
+                buf.push(6);
+                let map = obj.borrow();
+                buf.extend_from_slice(&(map.len() as u32).to_le_bytes());
+                for (k, v) in map.iter() {
+                    let bytes = k.as_bytes();
+                    buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                    buf.extend_from_slice(bytes);
+                    v.serialize_into(buf);
+                }
+            }
+            Value::Enum { enum_name, variant, value } => {
+                buf.push(7);
+                let bytes = enum_name.as_bytes();
+                buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                buf.extend_from_slice(bytes);
+                let bytes = variant.as_bytes();
+                buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                buf.extend_from_slice(bytes);
+                if let Some(val) = value {
+                    buf.push(1);
+                    val.serialize_into(buf);
+                } else {
+                    buf.push(0);
+                }
+            }
             Value::Ref(_) | Value::MutRef(_) => {
                 buf.push(0);
             }
@@ -218,6 +260,82 @@ impl Value {
                 let f = CompiledFunction::deserialize_from(data, pos)?;
                 Ok(Value::Func(f))
             }
+            5 => {
+                let num_elements = read_u32_at(data, pos)? as usize;
+                let mut elements = Vec::with_capacity(num_elements);
+                for _ in 0..num_elements {
+                    elements.push(Value::deserialize_from(data, pos)?);
+                }
+                Ok(Value::Array(Rc::new(RefCell::new(elements))))
+            }
+            6 => {
+                let num_fields = read_u32_at(data, pos)? as usize;
+                let mut map = HashMap::new();
+                for _ in 0..num_fields {
+                    let name_len = read_u32_at(data, pos)? as usize;
+                    if *pos + name_len > data.len() {
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "bytecode truncated".to_string(),
+                        });
+                    }
+                    let name = String::from_utf8(data[*pos..*pos + name_len].to_vec()).map_err(|_| {
+                        Error::Runtime {
+                            pos: None,
+                            msg: "invalid utf-8 in string".to_string(),
+                        }
+                    })?;
+                    *pos += name_len;
+                    let value = Value::deserialize_from(data, pos)?;
+                    map.insert(name, value);
+                }
+                Ok(Value::Object(Rc::new(RefCell::new(map))))
+            }
+            7 => {
+                let enum_len = read_u32_at(data, pos)? as usize;
+                if *pos + enum_len > data.len() {
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
+                }
+                let enum_name = String::from_utf8(data[*pos..*pos + enum_len].to_vec()).map_err(|_| {
+                    Error::Runtime {
+                        pos: None,
+                        msg: "invalid utf-8 in string".to_string(),
+                    }
+                })?;
+                *pos += enum_len;
+
+                let variant_len = read_u32_at(data, pos)? as usize;
+                if *pos + variant_len > data.len() {
+                    return Err(Error::Runtime {
+                        pos: None,
+                        msg: "bytecode truncated".to_string(),
+                    });
+                }
+                let variant = String::from_utf8(data[*pos..*pos + variant_len].to_vec()).map_err(|_| {
+                    Error::Runtime {
+                        pos: None,
+                        msg: "invalid utf-8 in string".to_string(),
+                    }
+                })?;
+                *pos += variant_len;
+
+                let has_value = data[*pos];
+                *pos += 1;
+                let value = if has_value == 1 {
+                    Some(Box::new(Value::deserialize_from(data, pos)?))
+                } else {
+                    None
+                };
+
+                Ok(Value::Enum {
+                    enum_name,
+                    variant,
+                    value,
+                })
+            }
             other => Err(Error::Runtime {
                 pos: None,
                 msg: format!("unknown value tag in bytecode: {}", other),
@@ -263,6 +381,9 @@ impl VM {
             open_upvalues: Vec::new(),
         };
         vm.globals.push(Value::Builtin(builtin_print));
+        vm.globals.push(Value::Builtin(builtin_len));
+        vm.globals.push(Value::Builtin(builtin_push));
+        vm.globals.push(Value::Builtin(builtin_pop));
         vm
     }
 
@@ -748,6 +869,169 @@ impl VM {
                     self.stack.push(Value::Num(-(idx as f64 + 1.0)));
                     self.call_stack[frame_idx].ip += 3;
                 }
+                Op::Array => {
+                    let count = self.read_u16(&bytecode, ip + 1) as usize;
+                    let mut elements = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        elements.push(self.stack.pop().unwrap_or(Value::Null));
+                    }
+                    elements.reverse();
+                    self.stack.push(Value::Array(Rc::new(RefCell::new(elements))));
+                    self.call_stack[frame_idx].ip += 3;
+                }
+                Op::Object => {
+                    let count = self.read_u16(&bytecode, ip + 1) as usize;
+                    let mut map = HashMap::new();
+                    let mut values = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let value = self.stack.pop().unwrap_or(Value::Null);
+                        values.push(value);
+                    }
+                    values.reverse();
+                    for i in 0..count {
+                        if let Value::Str(name) = values[i].clone() {
+                            if i + 1 < count {
+                                map.insert(name, values[i + 1].clone());
+                            }
+                        }
+                    }
+                    self.stack.push(Value::Object(Rc::new(RefCell::new(map))));
+                    self.call_stack[frame_idx].ip += 3;
+                }
+                Op::Index => {
+                    let index = self.stack.pop().unwrap_or(Value::Null);
+                    let object = self.stack.pop().unwrap_or(Value::Null);
+                    match (object, index) {
+                        (Value::Array(arr), Value::Num(idx)) => {
+                            let idx = idx as usize;
+                            let elements = arr.borrow();
+                            if idx < elements.len() {
+                                self.stack.push(elements[idx].clone());
+                            } else {
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: format!("array index out of bounds: {}", idx),
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid indexing operation".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::IndexSet => {
+                    let value = self.stack.pop().unwrap_or(Value::Null);
+                    let index = self.stack.pop().unwrap_or(Value::Null);
+                    let object = self.stack.pop().unwrap_or(Value::Null);
+                    match (object, index, value) {
+                        (Value::Array(arr), Value::Num(idx), val) => {
+                            let idx = idx as usize;
+                            let mut elements = arr.borrow_mut();
+                            if idx < elements.len() {
+                                elements[idx] = val;
+                                self.stack.push(Value::Null);
+                            } else {
+                                return Err(Error::Runtime {
+                                    pos: None,
+                                    msg: format!("array index out of bounds: {}", idx),
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Runtime {
+                                pos: None,
+                                msg: "invalid index assignment".to_string(),
+                            })
+                        }
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::GetField => {
+                    let field = self.stack.pop().unwrap_or(Value::Null);
+                    let object = self.stack.pop().unwrap_or(Value::Null);
+                    if let (Value::Object(obj), Value::Str(field_name)) = (object, field) {
+                        let map = obj.borrow();
+                        if let Some(value) = map.get(&field_name) {
+                            self.stack.push(value.clone());
+                        } else {
+                            self.stack.push(Value::Null);
+                        }
+                    } else {
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid field access".to_string(),
+                        });
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::SetField => {
+                    let value = self.stack.pop().unwrap_or(Value::Null);
+                    let field = self.stack.pop().unwrap_or(Value::Null);
+                    let object = self.stack.pop().unwrap_or(Value::Null);
+                    if let (Value::Object(obj), Value::Str(field_name)) = (object, field) {
+                        let mut map = obj.borrow_mut();
+                        map.insert(field_name, value);
+                        self.stack.push(Value::Null);
+                    } else {
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid field assignment".to_string(),
+                        });
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::EnumVariant => {
+                    let value = self.stack.pop().unwrap_or(Value::Null);
+                    let variant = self.stack.pop().unwrap_or(Value::Null);
+                    let enum_name = self.stack.pop().unwrap_or(Value::Null);
+                    if let (Value::Str(enum_name), Value::Str(variant)) = (enum_name, variant) {
+                        let enum_val = Value::Enum {
+                            enum_name,
+                            variant,
+                            value: Some(Box::new(value)),
+                        };
+                        self.stack.push(enum_val);
+                    } else {
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "invalid enum variant".to_string(),
+                        });
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::IsEnumVariant => {
+                    let variant = self.stack.pop().unwrap_or(Value::Null);
+                    let enum_name = self.stack.pop().unwrap_or(Value::Null);
+                    let value = self.stack.pop().unwrap_or(Value::Null);
+                    if let (Value::Enum { enum_name: e, variant: v, .. }, Value::Str(enum_name), Value::Str(variant)) =
+                        (&value, enum_name, variant)
+                    {
+                        self.stack.push(Value::Bool(*e == enum_name && *v == variant));
+                    } else {
+                        self.stack.push(Value::Bool(false));
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
+                Op::GetEnumValue => {
+                    let value = self.stack.pop().unwrap_or(Value::Null);
+                    if let Value::Enum { value: v, .. } = value {
+                        if let Some(val) = v {
+                            self.stack.push(*val);
+                        } else {
+                            self.stack.push(Value::Null);
+                        }
+                    } else {
+                        return Err(Error::Runtime {
+                            pos: None,
+                            msg: "expected enum value".to_string(),
+                        });
+                    }
+                    self.call_stack[frame_idx].ip += 1;
+                }
                 Op::Ref => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     self.stack.push(Value::Ref(Rc::new(RefCell::new(val))));
@@ -796,6 +1080,45 @@ impl VM {
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::Num(x), Value::Num(y)) => x == y,
             (Value::Str(x), Value::Str(y)) => x == y,
+            (Value::Array(x), Value::Array(y)) => {
+                if x.borrow().len() != y.borrow().len() {
+                    return false;
+                }
+                for (xv, yv) in x.borrow().iter().zip(y.borrow().iter()) {
+                    if !self.values_eq(xv, yv) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (Value::Object(x), Value::Object(y)) => {
+                let xm = x.borrow();
+                let ym = y.borrow();
+                if xm.len() != ym.len() {
+                    return false;
+                }
+                for (k, xv) in xm.iter() {
+                    if let Some(yv) = ym.get(k) {
+                        if !self.values_eq(xv, yv) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+            (Value::Enum { enum_name: xn, variant: xv, value: xval },
+             Value::Enum { enum_name: yn, variant: yv, value: yval }) => {
+                if xn != yn || xv != yv {
+                    return false;
+                }
+                match (xval, yval) {
+                    (Some(x), Some(y)) => self.values_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
             (Value::Ref(x), Value::Ref(y)) | (Value::MutRef(x), Value::MutRef(y)) => {
                 Rc::ptr_eq(x, y)
             }
@@ -817,6 +1140,35 @@ impl fmt::Display for Value {
                 }
             }
             Value::Str(s) => write!(f, "\"{}\"", s),
+            Value::Array(arr) => {
+                let elements = arr.borrow();
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
+            Value::Object(obj) => {
+                let map = obj.borrow();
+                write!(f, "{{")?;
+                for (i, (k, v)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, "}}")
+            }
+            Value::Enum { enum_name, variant, value } => {
+                if let Some(val) = value {
+                    write!(f, "{}::{}({})", enum_name, variant, val)
+                } else {
+                    write!(f, "{}::{}", enum_name, variant)
+                }
+            }
             Value::Func(_) => write!(f, "<function>"),
             Value::Closure(_) => write!(f, "<closure>"),
             Value::Builtin(_) => write!(f, "<builtin>"),
@@ -838,5 +1190,77 @@ fn builtin_print(vm: &mut VM, num_args: u16) -> Result<(), Error> {
     println!();
     vm.stack.truncate(start);
     vm.stack.push(Value::Null);
+    Ok(())
+}
+
+fn builtin_len(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("len expects 1 argument, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    let len = match val {
+        Value::Str(s) => s.len() as f64,
+        Value::Array(arr) => arr.borrow().len() as f64,
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "len expects string or array".to_string(),
+            })
+        }
+    };
+    vm.stack.push(Value::Num(len));
+    Ok(())
+}
+
+fn builtin_push(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 2 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("push expects 2 arguments, got {}", num_args),
+        });
+    }
+    let val = vm.stack.pop().unwrap_or(Value::Null);
+    let arr = vm.stack.pop().unwrap_or(Value::Null);
+    match arr {
+        Value::Array(array) => {
+            array.borrow_mut().push(val);
+            vm.stack.push(Value::Null);
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "push expects array as first argument".to_string(),
+            })
+        }
+    }
+    Ok(())
+}
+
+fn builtin_pop(vm: &mut VM, num_args: u16) -> Result<(), Error> {
+    if num_args != 1 {
+        return Err(Error::Runtime {
+            pos: None,
+            msg: format!("pop expects 1 argument, got {}", num_args),
+        });
+    }
+    let arr = vm.stack.pop().unwrap_or(Value::Null);
+    match arr {
+        Value::Array(array) => {
+            if let Some(val) = array.borrow_mut().pop() {
+                vm.stack.push(val);
+            } else {
+                vm.stack.push(Value::Null);
+            }
+        }
+        _ => {
+            return Err(Error::Runtime {
+                pos: None,
+                msg: "pop expects array as argument".to_string(),
+            })
+        }
+    }
     Ok(())
 }

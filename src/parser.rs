@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, Pos, Stmt, UnaryOp};
+use crate::ast::{BinOp, Expr, Pattern, Pos, Stmt, UnaryOp};
 use crate::error::Error;
 use crate::lexer::{Lex, Tok};
 use std::collections::HashMap;
@@ -45,6 +45,8 @@ impl<'a> P<'a> {
             Tok::Label(name, pos) => self.label_loop(&name, pos),
             Tok::Return(pos) => self.return_stmt(pos),
             Tok::Break(pos) => self.break_stmt(pos),
+            Tok::Continue(pos) => self.continue_stmt(pos),
+            Tok::Match(pos) => self.match_stmt(pos),
             Tok::LBrace(_) => self.block(),
             Tok::Semicolon(pos) => {
                 self.consume();
@@ -203,23 +205,40 @@ impl<'a> P<'a> {
     fn for_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
         self.consume();
         self.expect_lparen()?;
-        let init = if matches!(self.cur, Tok::Semicolon(_)) {
+
+        if matches!(self.cur, Tok::Let(_)) || matches!(self.cur, Tok::Mut(_)) {
+            let is_mut = matches!(self.cur, Tok::Mut(_));
             self.consume();
-            None
-        } else if matches!(self.cur, Tok::Let(_)) | matches!(self.cur, Tok::Mut(_)) {
-            let init_stmt = self.stmt()?;
-            if matches!(init_stmt, Stmt::Let { .. }) | matches!(init_stmt, Stmt::Mut { .. }) {
-                Some(Box::new(init_stmt))
+            let var = self.expect_ident()?;
+
+            if matches!(self.cur, Tok::In(_)) {
+                self.consume();
+                let iterable = self.expr()?;
+                self.expect_rparen()?;
+                self.loop_stack.push(None);
+                let body = Box::new(self.block()?);
+                self.loop_stack.pop();
+                return Ok(Stmt::ForIn {
+                    var,
+                    iterable,
+                    body,
+                    pos,
+                });
             } else {
                 return Err(Error::Compile {
                     pos,
-                    msg: "for loop init must be a variable declaration".to_string(),
+                    msg: "expected 'in' in for loop".to_string(),
                 });
             }
+        }
+
+        let init = if matches!(self.cur, Tok::Semicolon(_)) {
+            self.consume();
+            None
         } else {
             return Err(Error::Compile {
                 pos,
-                msg: "for loop init must be a variable declaration or semicolon".to_string(),
+                msg: "for loop init must be a semicolon".to_string(),
             });
         };
         let cond = if matches!(self.cur, Tok::Semicolon(_)) {
@@ -287,6 +306,125 @@ impl<'a> P<'a> {
         };
         self.consume_semicolon()?;
         Ok(Stmt::Return { value, pos })
+    }
+
+    fn continue_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
+        self.consume();
+        let label = if let Tok::Label(name, _) = self.cur.clone() {
+            let label = name;
+            self.consume();
+            if !self.loop_stack.iter().any(|l| l.as_deref() == Some(&label)) {
+                return Err(Error::Compile {
+                    pos,
+                    msg: format!("undefined label '{}'", label),
+                });
+            }
+            Some(label)
+        } else {
+            None
+        };
+        self.consume_semicolon()?;
+        if self.loop_stack.is_empty() && label.is_none() {
+            return Err(Error::Compile {
+                pos,
+                msg: "continue outside loop".to_string(),
+            });
+        }
+        Ok(Stmt::Continue { label, pos })
+    }
+
+    fn match_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
+        self.consume();
+        self.expect_lparen()?;
+        let expr = self.expr()?;
+        self.expect_rparen()?;
+        self.expect_lbrace()?;
+        let mut arms = Vec::new();
+        while !matches!(self.cur, Tok::RBrace(_) | Tok::Eof(_)) {
+            let pattern = self.pattern()?;
+            self.expect_fat_arrow()?;
+            let arm_expr = self.expr()?;
+            self.consume_semicolon()?;
+            arms.push((pattern, arm_expr));
+        }
+        self.expect_rbrace()?;
+        Ok(Stmt::Expr(Expr::Match {
+            expr: Box::new(expr),
+            arms,
+            pos,
+        }))
+    }
+
+    fn expect_lbrace(&mut self) -> Result<(), Error> {
+        if matches!(self.cur, Tok::LBrace(_)) {
+            self.consume();
+            Ok(())
+        } else {
+            Err(Error::Syntax {
+                pos: self.pos(),
+                msg: "expected '{'".to_string(),
+                input: self.input.to_string(),
+            })
+        }
+    }
+
+    fn pattern(&mut self) -> Result<Pattern, Error> {
+        let tok = self.cur.clone();
+        match tok {
+            Tok::Ident(name, _) if name == "_" => {
+                self.consume();
+                Ok(Pattern::Wildcard)
+            }
+            Tok::Ident(name, pos) => {
+                self.consume();
+                if matches!(self.cur, Tok::DoubleColon(_)) {
+                    self.consume();
+                    let variant = self.expect_ident()?;
+                    if matches!(self.cur, Tok::If(_)) {
+                        self.consume();
+                        let binding = self.expect_ident()?;
+                        Ok(Pattern::EnumVariant {
+                            enum_name: name,
+                            variant,
+                            binding: Some(binding),
+                        })
+                    } else {
+                        Ok(Pattern::EnumVariant {
+                            enum_name: name,
+                            variant,
+                            binding: None,
+                        })
+                    }
+                } else {
+                    Ok(Pattern::Ident(name))
+                }
+            }
+            Tok::True(pos) => {
+                self.consume();
+                Ok(Pattern::Literal(Expr::Bool(true, pos)))
+            }
+            Tok::False(pos) => {
+                self.consume();
+                Ok(Pattern::Literal(Expr::Bool(false, pos)))
+            }
+            Tok::Null(pos) => {
+                self.consume();
+                Ok(Pattern::Literal(Expr::Null(pos)))
+            }
+            Tok::Num(n, pos) => {
+                self.consume();
+                Ok(Pattern::Literal(Expr::Num(n, pos)))
+            }
+            Tok::Str(s, pos) => {
+                self.consume();
+                Ok(Pattern::Literal(Expr::Str(s, pos)))
+            }
+            _ => Err(Error::Syntax {
+                pos: self.pos(),
+                msg: format!("unexpected token in pattern: {:?}", tok),
+                input: self.input.to_string(),
+            }),
+        }
     }
 
     fn block(&mut self) -> Result<Stmt, Error> {
@@ -412,7 +550,11 @@ impl<'a> P<'a> {
                 let update_has = update.as_ref().map_or(false, |u| self.has_placeholder(u));
                 init_has || cond_has || update_has || self.has_placeholder_in_stmt(body)
             }
+            Stmt::ForIn { iterable, body, .. } => {
+                self.has_placeholder(iterable) || self.has_placeholder_in_stmt(body)
+            }
             Stmt::Break { value, .. } => value.as_ref().map_or(false, |v| self.has_placeholder(v)),
+            Stmt::Continue { .. } => false,
             Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| self.has_placeholder(v)),
             Stmt::Expr(e) => self.has_placeholder(e),
         }
@@ -604,24 +746,70 @@ impl<'a> P<'a> {
         let mut callee = self.primary()?;
         loop {
             let tok = self.cur.clone();
-            if let Tok::LParen(pos) = tok {
-                self.consume();
-                let mut args = Vec::new();
-                if !matches!(self.cur, Tok::RParen(_)) {
-                    args.push(self.expr()?);
-                    while let Tok::Comma(_) = self.cur.clone() {
-                        self.consume();
+            match tok {
+                Tok::LParen(pos) => {
+                    self.consume();
+                    let mut args = Vec::new();
+                    if !matches!(self.cur, Tok::RParen(_)) {
                         args.push(self.expr()?);
+                        while let Tok::Comma(_) = self.cur.clone() {
+                            self.consume();
+                            args.push(self.expr()?);
+                        }
+                    }
+                    self.expect_rparen()?;
+                    callee = Expr::Call {
+                        callee: Box::new(callee),
+                        args,
+                        pos,
+                    };
+                }
+                Tok::LBracket(pos) => {
+                    self.consume();
+                    let index = self.expr()?;
+                    self.expect_rbracket()?;
+                    callee = Expr::Index {
+                        object: Box::new(callee),
+                        index: Box::new(index),
+                        pos,
+                    };
+                }
+                Tok::Dot(pos) => {
+                    self.consume();
+                    let field = self.expect_ident()?;
+                    callee = Expr::Field {
+                        object: Box::new(callee),
+                        field,
+                        pos,
+                    };
+                }
+                Tok::DoubleColon(pos) => {
+                    self.consume();
+                    let variant = self.expect_ident()?;
+                    let value = if matches!(self.cur, Tok::LParen(_)) {
+                        self.consume();
+                        let v = self.expr()?;
+                        self.expect_rparen()?;
+                        Some(Box::new(v))
+                    } else {
+                        None
+                    };
+                    if let Expr::Ident(name, _) = callee {
+                        callee = Expr::EnumVariant {
+                            enum_name: name,
+                            variant,
+                            value,
+                            pos,
+                        };
+                    } else {
+                        return Err(Error::Syntax {
+                            pos,
+                            msg: "expected identifier before '::'".to_string(),
+                            input: self.input.to_string(),
+                        });
                     }
                 }
-                self.expect_rparen()?;
-                callee = Expr::Call {
-                    callee: Box::new(callee),
-                    args,
-                    pos,
-                };
-            } else {
-                break;
+                _ => break,
             }
         }
         Ok(callee)
@@ -654,6 +842,8 @@ impl<'a> P<'a> {
                 self.consume();
                 Ok(Expr::Ident(name, pos))
             }
+            Tok::LBracket(_) => self.array_literal(),
+            Tok::LBrace(_) => self.object_literal(),
             Tok::LParen(_) => {
                 self.consume();
                 let e = self.expr()?;
@@ -662,12 +852,56 @@ impl<'a> P<'a> {
             }
             Tok::Fn(pos) => self.func(pos),
             Tok::PipeSingle(pos) => self.arrow(pos),
+            Tok::Question(pos) => {
+                self.consume();
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Deref,
+                    expr: Box::new(self.unary()?),
+                    pos,
+                })
+            }
             _ => Err(Error::Syntax {
                 pos: self.pos(),
                 msg: format!("unexpected token {:?}", tok),
                 input: self.input.to_string(),
             }),
         }
+    }
+
+    fn array_literal(&mut self) -> Result<Expr, Error> {
+        let pos = self.pos();
+        self.consume();
+        let mut elements = Vec::new();
+        if !matches!(self.cur, Tok::RBracket(_)) {
+            elements.push(self.expr()?);
+            while matches!(self.cur, Tok::Comma(_)) {
+                self.consume();
+                elements.push(self.expr()?);
+            }
+        }
+        self.expect_rbracket()?;
+        Ok(Expr::Array(elements, pos))
+    }
+
+    fn object_literal(&mut self) -> Result<Expr, Error> {
+        let pos = self.pos();
+        self.consume();
+        let mut fields = Vec::new();
+        if !matches!(self.cur, Tok::RBrace(_)) {
+            let name = self.expect_ident()?;
+            self.expect_colon()?;
+            let value = self.expr()?;
+            fields.push((name, value));
+            while matches!(self.cur, Tok::Comma(_)) {
+                self.consume();
+                let name = self.expect_ident()?;
+                self.expect_colon()?;
+                let value = self.expr()?;
+                fields.push((name, value));
+            }
+        }
+        self.expect_rbrace()?;
+        Ok(Expr::Object(fields, pos))
     }
 
     fn func(&mut self, pos: Pos) -> Result<Expr, Error> {
@@ -833,6 +1067,19 @@ impl<'a> P<'a> {
         }
     }
 
+    fn expect_colon(&mut self) -> Result<(), Error> {
+        if matches!(self.cur, Tok::Colon(_)) {
+            self.consume();
+            Ok(())
+        } else {
+            Err(Error::Syntax {
+                pos: self.pos(),
+                msg: "expected ':'".to_string(),
+                input: self.input.to_string(),
+            })
+        }
+    }
+
     fn expect_rbracket(&mut self) -> Result<(), Error> {
         if matches!(self.cur, Tok::RBracket(_)) {
             self.consume();
@@ -854,6 +1101,19 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
                 pos: self.pos(),
                 msg: "expected 'loop'".to_string(),
+                input: self.input.to_string(),
+            })
+        }
+    }
+
+    fn expect_fat_arrow(&mut self) -> Result<(), Error> {
+        if matches!(self.cur, Tok::FatArrow(_)) {
+            self.consume();
+            Ok(())
+        } else {
+            Err(Error::Syntax {
+                pos: self.pos(),
+                msg: "expected '=>'".to_string(),
                 input: self.input.to_string(),
             })
         }
@@ -881,8 +1141,13 @@ impl<'a> P<'a> {
             | Tok::Or(p)
             | Tok::Loop(p)
             | Tok::Break(p)
+            | Tok::Continue(p)
             | Tok::While(p)
             | Tok::For(p)
+            | Tok::In(p)
+            | Tok::Match(p)
+            | Tok::Enum(p)
+            | Tok::Struct(p)
             | Tok::Ident(_, p)
             | Tok::Label(_, p)
             | Tok::Num(_, p)
@@ -909,6 +1174,11 @@ impl<'a> P<'a> {
             | Tok::LBracket(p)
             | Tok::RBracket(p)
             | Tok::Ref(p)
+            | Tok::Dot(p)
+            | Tok::Colon(p)
+            | Tok::DoubleColon(p)
+            | Tok::FatArrow(p)
+            | Tok::Question(p)
             | Tok::Eof(p) => *p,
         }
     }
@@ -925,8 +1195,14 @@ impl ExprPos for Expr {
             | Expr::Bool(_, p)
             | Expr::Num(_, p)
             | Expr::Str(_, p)
-            | Expr::Ident(_, p) => *p,
-            Expr::BinOp { pos, .. }
+            | Expr::Ident(_, p)
+            | Expr::Array(_, p) => *p,
+            Expr::Index { pos, .. }
+            | Expr::Object(_, pos)
+            | Expr::Field { pos, .. }
+            | Expr::EnumVariant { pos, .. }
+            | Expr::Match { pos, .. }
+            | Expr::BinOp { pos, .. }
             | Expr::UnaryOp { pos, .. }
             | Expr::Call { pos, .. }
             | Expr::Func { pos, .. }

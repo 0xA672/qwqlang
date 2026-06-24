@@ -17,8 +17,13 @@ pub enum Tok {
     Or(Pos),
     Loop(Pos),
     Break(Pos),
+    Continue(Pos),
     While(Pos),
     For(Pos),
+    In(Pos),
+    Match(Pos),
+    Enum(Pos),
+    Struct(Pos),
     Ident(String, Pos),
     Label(String, Pos),
     Num(f64, Pos),
@@ -45,6 +50,11 @@ pub enum Tok {
     LBracket(Pos),
     RBracket(Pos),
     Ref(Pos),
+    Dot(Pos),
+    Colon(Pos),
+    DoubleColon(Pos),
+    FatArrow(Pos),
+    Question(Pos),
     Eof(Pos),
 }
 
@@ -109,6 +119,10 @@ impl<'a> Lex<'a> {
                                 self.col += 1;
                                 self.chars.next();
                                 return Tok::Eq(pos);
+                            } else if let Some(&'>') = self.chars.peek() {
+                                self.col += 1;
+                                self.chars.next();
+                                return Tok::FatArrow(pos);
                             }
                             return Tok::Assign(pos);
                         }
@@ -120,6 +134,10 @@ impl<'a> Lex<'a> {
                                 return Tok::Neq(pos);
                             }
                             return self.error(pos, "unexpected '!'");
+                        }
+                        '?' => {
+                            self.col += 1;
+                            return Tok::Question(pos);
                         }
                         '<' => {
                             self.col += 1;
@@ -184,6 +202,27 @@ impl<'a> Lex<'a> {
                             self.col += 1;
                             return Tok::RBracket(pos);
                         }
+                        '.' => {
+                            self.col += 1;
+                            if let Some(&'.') = self.chars.peek() {
+                                self.col += 1;
+                                self.chars.next();
+                                if let Some(&'.') = self.chars.peek() {
+                                    self.col += 1;
+                                    self.chars.next();
+                                }
+                            }
+                            return Tok::Dot(pos);
+                        }
+                        ':' => {
+                            self.col += 1;
+                            if let Some(&':') = self.chars.peek() {
+                                self.col += 1;
+                                self.chars.next();
+                                return Tok::DoubleColon(pos);
+                            }
+                            return Tok::Colon(pos);
+                        }
                         '\'' => {
                             self.col += 1;
                             let label = self.identifier();
@@ -220,8 +259,13 @@ impl<'a> Lex<'a> {
                                 "or" => Tok::Or(pos),
                                 "loop" => Tok::Loop(pos),
                                 "break" => Tok::Break(pos),
+                                "continue" => Tok::Continue(pos),
                                 "while" => Tok::While(pos),
                                 "for" => Tok::For(pos),
+                                "in" => Tok::In(pos),
+                                "match" => Tok::Match(pos),
+                                "enum" => Tok::Enum(pos),
+                                "struct" => Tok::Struct(pos),
                                 _ => Tok::Ident(ident, pos),
                             };
                             return tok;
