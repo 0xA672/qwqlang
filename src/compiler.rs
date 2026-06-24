@@ -385,6 +385,8 @@ impl Comp {
                         .iter()
                         .rposition(|(_, l, _, _)| l.as_deref() == Some(label))
                         .ok_or_else(|| Error::Compile {
+            input: None,
+            filename: None,
                             pos: *pos,
                             msg: format!("undefined label '{}'", label),
                         })?
@@ -393,6 +395,8 @@ impl Comp {
                         .len()
                         .checked_sub(1)
                         .ok_or_else(|| Error::Compile {
+            input: None,
+            filename: None,
                             pos: *pos,
                             msg: "break outside loop".to_string(),
                         })?
@@ -415,6 +419,8 @@ impl Comp {
                         .iter()
                         .rposition(|(_, l, _, _)| l.as_deref() == Some(label))
                         .ok_or_else(|| Error::Compile {
+            input: None,
+            filename: None,
                             pos: *pos,
                             msg: format!("undefined label '{}'", label),
                         })?
@@ -423,6 +429,8 @@ impl Comp {
                         .len()
                         .checked_sub(1)
                         .ok_or_else(|| Error::Compile {
+            input: None,
+            filename: None,
                             pos: *pos,
                             msg: "continue outside loop".to_string(),
                         })?
@@ -1284,6 +1292,8 @@ impl Comp {
             if let Some((is_mut, _is_local)) = self.find_var(var, &saved_locals, &saved_free) {
                 if is_mut && !capture_set.contains(var) {
                     return Err(Error::Compile {
+            input: None,
+            filename: None,
                         pos,
                         msg: format!("mutable variable '{}' must be explicitly captured", var),
                     });
@@ -1295,6 +1305,8 @@ impl Comp {
         for cap in captures {
             if !self.free.iter().any(|(n, _)| n == cap) {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: format!("capture '{}' is not used in closure", cap),
                 });
@@ -1444,6 +1456,8 @@ impl Comp {
         if let Some((_, is_mut)) = self.locals.iter().find(|(n, _)| n == name) {
             if !is_mut {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: format!("cannot assign to immutable variable '{}'", name),
                 });
@@ -1453,6 +1467,8 @@ impl Comp {
         if let Some((_, is_mut)) = self.free.iter().find(|(n, _)| n == name) {
             if !is_mut {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: format!("cannot assign to immutable variable '{}'", name),
                 });
@@ -1462,6 +1478,8 @@ impl Comp {
         if let Some(&(_, is_mut)) = self.globals.get(name) {
             if !is_mut {
                 return Err(Error::Compile {
+            input: None,
+            filename: None,
                     pos,
                     msg: format!("cannot assign to immutable variable '{}'", name),
                 });
@@ -1813,7 +1831,9 @@ impl Comp {
                 suggestions.join(", ")
             )
         };
-        Err(Error::Compile { pos, msg })
+        Err(Error::Compile {
+            input: None,
+            filename: None, pos, msg })
     }
 
     fn compile_destruct_pattern(&mut self, pattern: &DestructPattern, pos: Pos) -> Result<(), Error> {
@@ -1822,6 +1842,8 @@ impl Comp {
                 if !self.func_stack.is_empty() {
                     if let Some(_idx) = self.locals.iter().position(|(n, _)| n == name) {
                         return Err(Error::Compile {
+            input: None,
+            filename: None,
                             pos,
                             msg: format!("variable '{}' already declared", name),
                         });
@@ -1831,6 +1853,8 @@ impl Comp {
                 if self.func_stack.is_empty() {
                     if self.builtins.contains_key(name) {
                         return Err(Error::Compile {
+            input: None,
+            filename: None,
                             pos,
                             msg: format!("cannot shadow builtin '{}'", name),
                         });
@@ -1882,6 +1906,8 @@ impl Comp {
                 if !self.func_stack.is_empty() {
                     if let Some(_idx) = self.locals.iter().position(|(n, _)| n == name) {
                         return Err(Error::Compile {
+            input: None,
+            filename: None,
                             pos,
                             msg: format!("variable '{}' already declared", name),
                         });
@@ -1891,6 +1917,8 @@ impl Comp {
                 if self.func_stack.is_empty() {
                     if self.builtins.contains_key(name) {
                         return Err(Error::Compile {
+            input: None,
+            filename: None,
                             pos,
                             msg: format!("cannot shadow builtin '{}'", name),
                         });

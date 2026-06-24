@@ -21,8 +21,8 @@ pub fn execute(code: &str) -> Result<Value, Error> {
     borrow_checker.check(&stmts)?;
 
     let mut compiler = Comp::new();
-    let func = compiler.compile(&stmts)?;
+    let func = compiler.compile(&stmts).map_err(|e| e.with_input(code.to_string()))?;
 
     let mut vm = VM::new();
-    vm.run(func)
+    vm.run(func).map_err(|e| e.with_input(code.to_string()))
 }
