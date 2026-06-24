@@ -153,6 +153,16 @@ fn read_u32_at(data: &[u8], pos: &mut usize) -> Result<u32, Error> {
     Ok(v)
 }
 
+#[inline]
+fn read_u16(bytecode: &[u8], pos: usize) -> u16 {
+    u16::from_le_bytes([bytecode[pos], bytecode[pos + 1]])
+}
+
+#[inline]
+fn read_i16(bytecode: &[u8], pos: usize) -> i16 {
+    read_u16(bytecode, pos) as i16
+}
+
 impl Value {
     fn serialize_into(&self, buf: &mut Vec<u8>) {
         match self {
@@ -504,40 +514,48 @@ impl VM {
         self.stack.resize(func.num_locals as usize, Value::Null);
 
         loop {
-            let frame_idx = self.call_stack.len() - 1;
-            let ip = self.call_stack[frame_idx].ip;
-            let closure = self.call_stack[frame_idx].closure.clone();
-            let bp = self.call_stack[frame_idx].bp;
-            let bytecode = closure.borrow().func.bytecode.clone();
+            let (ip, bp, bytecode_ptr, bytecode_len, closure_rc) = {
+                let frame = self.call_stack.last().unwrap();
+                let closure = frame.closure.borrow();
+                let bytecode = &closure.func.bytecode;
+                (
+                    frame.ip,
+                    frame.bp,
+                    bytecode.as_ptr(),
+                    bytecode.len(),
+                    frame.closure.clone(),
+                )
+            };
 
-            if ip >= bytecode.len() {
+            if ip >= bytecode_len {
                 let val = self.stack.pop().unwrap_or(Value::Null);
                 return Ok(val);
             }
 
-            let op = unsafe { std::mem::transmute::<u8, Op>(bytecode[ip]) };
+            let bytecode: &[u8] = unsafe { std::slice::from_raw_parts(bytecode_ptr, bytecode_len) };
+            let op = unsafe { std::mem::transmute::<u8, Op>(*bytecode_ptr.add(ip)) };
 
             #[cfg(debug_assertions)]
             eprintln!("DEBUG ip={}, op={:?}", ip, op);
 
             match op {
                 Op::Constant => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
-                    let val = closure.borrow().func.constants[idx as usize].clone();
+                    let idx = read_u16(bytecode, ip + 1);
+                    let val = closure_rc.borrow().func.constants[idx as usize].clone();
                     self.stack.push(val);
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::Null => {
                     self.stack.push(Value::Null);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::True => {
                     self.stack.push(Value::Bool(true));
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::False => {
                     self.stack.push(Value::Bool(false));
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Add => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -557,7 +575,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Sub => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -574,7 +592,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Mul => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -591,7 +609,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Div => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -618,19 +636,19 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Eq => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
                     let a = self.stack.pop().unwrap_or(Value::Null);
-                    self.stack.push(Value::Bool(self.values_eq(&a, &b)));
-                    self.call_stack[frame_idx].ip += 1;
+                    self.stack.push(Value::Bool(values_eq(&a, &b)));
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Neq => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
                     let a = self.stack.pop().unwrap_or(Value::Null);
-                    self.stack.push(Value::Bool(!self.values_eq(&a, &b)));
-                    self.call_stack[frame_idx].ip += 1;
+                    self.stack.push(Value::Bool(!values_eq(&a, &b)));
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Lt => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -648,7 +666,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Gt => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -666,7 +684,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Lte => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -684,7 +702,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Gte => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -702,7 +720,7 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Negate => {
                     let a = self.stack.pop().unwrap_or(Value::Null);
@@ -718,14 +736,14 @@ impl VM {
                         }
                     };
                     self.stack.push(res);
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Pop => {
                     self.stack.pop();
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::GetGlobal => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     if idx as usize >= self.globals.len() {
                         return Err(Error::Runtime {
             input: None,
@@ -738,10 +756,10 @@ impl VM {
                     #[cfg(debug_assertions)]
                     eprintln!("DEBUG GetGlobal: idx={}, val={:?}", idx, val);
                     self.stack.push(val);
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::SetGlobal => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     #[cfg(debug_assertions)]
                     eprintln!("DEBUG SetGlobal: idx={}, val={:?}", idx, val);
@@ -749,10 +767,10 @@ impl VM {
                         self.globals.resize((idx + 1) as usize, Value::Null);
                     }
                     self.globals[idx as usize] = val;
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::GetLocal => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     let stack_idx = bp + idx as usize;
                     #[cfg(debug_assertions)]
                     eprintln!(
@@ -771,10 +789,10 @@ impl VM {
                         });
                     }
                     self.stack.push(self.stack[stack_idx].clone());
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::SetLocal => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     let stack_idx = bp + idx as usize;
                     if stack_idx >= self.stack.len() {
@@ -786,11 +804,11 @@ impl VM {
                         });
                     }
                     self.stack[stack_idx] = val;
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::GetFree => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
-                    let closure_clone = closure.clone();
+                    let idx = read_u16(bytecode, ip + 1);
+                    let closure_clone = closure_rc.clone();
                     let upvalues = &closure_clone.borrow().upvalues;
                     if idx as usize >= upvalues.len() {
                         return Err(Error::Runtime {
@@ -806,12 +824,12 @@ impl VM {
                         Upvalue::Global(global_idx) => self.globals[*global_idx].clone(),
                     };
                     self.stack.push(val);
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::SetFree => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     let val = self.stack.pop().unwrap_or(Value::Null);
-                    let closure_clone = closure.clone();
+                    let closure_clone = closure_rc.clone();
                     let mut closure_mut = closure_clone.borrow_mut();
                     let upvalues = &mut closure_mut.upvalues;
                     if idx as usize >= upvalues.len() {
@@ -833,10 +851,10 @@ impl VM {
                             self.globals[*global_idx] = val;
                         }
                     }
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::Jump => {
-                    let offset = self.read_i16(&bytecode, ip + 1);
+                    let offset = read_i16(bytecode, ip + 1);
                     let target = ((ip as i16) + offset) as usize;
                     #[cfg(debug_assertions)]
                     eprintln!("DEBUG Jump: ip={}, offset={}, target={}, bytecode_len={}", ip, offset, target, bytecode.len());
@@ -844,44 +862,44 @@ impl VM {
                         #[cfg(debug_assertions)]
                         eprintln!("ERROR: Jump target {} >= bytecode len {}", target, bytecode.len());
                     }
-                    self.call_stack[frame_idx].ip = target;
+                    self.call_stack.last_mut().unwrap().ip = target;
                 }
                 Op::JumpIfFalse => {
                     let cond = self.stack.last().unwrap_or(&Value::Null).clone();
-                    let offset = self.read_i16(&bytecode, ip + 1);
-                    if !self.is_truthy(&cond) {
-                        self.call_stack[frame_idx].ip = ((ip as i16) + offset) as usize;
+                    let offset = read_i16(bytecode, ip + 1);
+                    if !is_truthy(&cond) {
+                        self.call_stack.last_mut().unwrap().ip = ((ip as i16) + offset) as usize;
                     } else {
                         self.stack.pop();
-                        self.call_stack[frame_idx].ip += 3;
+                        self.call_stack.last_mut().unwrap().ip += 3;
                     }
                 }
                 Op::JumpIfTrue => {
                     let cond = self.stack.last().unwrap_or(&Value::Null).clone();
-                    let offset = self.read_i16(&bytecode, ip + 1);
-                    if self.is_truthy(&cond) {
-                        self.call_stack[frame_idx].ip = ((ip as i16) + offset) as usize;
+                    let offset = read_i16(bytecode, ip + 1);
+                    if is_truthy(&cond) {
+                        self.call_stack.last_mut().unwrap().ip = ((ip as i16) + offset) as usize;
                     } else {
                         self.stack.pop();
-                        self.call_stack[frame_idx].ip += 3;
+                        self.call_stack.last_mut().unwrap().ip += 3;
                     }
                 }
                 Op::JumpIfFalsePop => {
                     let cond = self.stack.pop().unwrap_or(Value::Null);
-                    let offset = self.read_i16(&bytecode, ip + 1);
+                    let offset = read_i16(bytecode, ip + 1);
                     let target = ((ip as i16) + offset) as usize;
                     #[cfg(debug_assertions)]
                     eprintln!("DEBUG JumpIfFalsePop: cond={:?}, ip={}, offset={}, target={}, stack={:?}", cond, ip, offset, target, self.stack);
-                    if !self.is_truthy(&cond) {
-                        self.call_stack[frame_idx].ip = target;
+                    if !is_truthy(&cond) {
+                        self.call_stack.last_mut().unwrap().ip = target;
                     } else {
-                        self.call_stack[frame_idx].ip += 3;
+                        self.call_stack.last_mut().unwrap().ip += 3;
                     }
                 }
                 Op::Closure => {
-                    let func_idx = self.read_u16(&bytecode, ip + 1);
-                    let num_free = self.read_u16(&bytecode, ip + 3);
-                    let constants = &closure.borrow().func.constants;
+                    let func_idx = read_u16(bytecode, ip + 1);
+                    let num_free = read_u16(bytecode, ip + 3);
+                    let constants = &closure_rc.borrow().func.constants;
                     let func = match &constants[func_idx as usize] {
                         Value::Func(f) => f.clone(),
                         _ => {
@@ -908,10 +926,10 @@ impl VM {
                     }
                     let new_closure = Rc::new(RefCell::new(Closure { func, upvalues }));
                     self.stack.push(Value::Closure(new_closure));
-                    self.call_stack[frame_idx].ip += 5;
+                    self.call_stack.last_mut().unwrap().ip += 5;
                 }
                 Op::Call => {
-                    let num_args = self.read_u16(&bytecode, ip + 1);
+                    let num_args = read_u16(bytecode, ip + 1);
                     #[cfg(debug_assertions)]
                     eprintln!("DEBUG: Call - stack: {:?}", self.stack);
                     let callee_idx = self.stack.len() - num_args as usize - 1;
@@ -926,7 +944,8 @@ impl VM {
                     let callee = self.stack.remove(callee_idx);
                     #[cfg(debug_assertions)]
                     eprintln!("DEBUG: Call - callee: {:?}", callee);
-                    match callee {
+                    let caller_ip = ip + 3;
+                    match &callee {
                         Value::Closure(closure) => {
                             let func = &closure.borrow().func;
                             if func.num_params != num_args {
@@ -986,7 +1005,15 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 3;
+                    match callee {
+                        Value::Builtin(_) => {
+                            self.call_stack.last_mut().unwrap().ip = caller_ip;
+                        }
+                        _ => {
+                            let caller_frame_idx = self.call_stack.len() - 2;
+                            self.call_stack[caller_frame_idx].ip = caller_ip;
+                        }
+                    }
                 }
                 Op::Return => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -998,7 +1025,7 @@ impl VM {
                     self.stack.push(val);
                 }
                 Op::GetBuiltin => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     if idx as usize >= self.globals.len() {
                         return Err(Error::Runtime {
             input: None,
@@ -1008,25 +1035,25 @@ impl VM {
                         });
                     }
                     self.stack.push(self.globals[idx as usize].clone());
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::CaptureGlobal => {
-                    let idx = self.read_u16(&bytecode, ip + 1);
+                    let idx = read_u16(bytecode, ip + 1);
                     self.stack.push(Value::Num(-(idx as f64 + 1.0)));
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::Array => {
-                    let count = self.read_u16(&bytecode, ip + 1) as usize;
+                    let count = read_u16(bytecode, ip + 1) as usize;
                     let mut elements = Vec::with_capacity(count);
                     for _ in 0..count {
                         elements.push(self.stack.pop().unwrap_or(Value::Null));
                     }
                     elements.reverse();
                     self.stack.push(Value::Array(Rc::new(RefCell::new(elements))));
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::Object => {
-                    let count = self.read_u16(&bytecode, ip + 1) as usize;
+                    let count = read_u16(bytecode, ip + 1) as usize;
                     let mut map = HashMap::new();
                     let mut values = Vec::with_capacity(count * 2);
                     for _ in 0..count * 2 {
@@ -1044,7 +1071,7 @@ impl VM {
                         }
                     }
                     self.stack.push(Value::Object(Rc::new(RefCell::new(map))));
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
                 Op::Index => {
                     let index = self.stack.pop().unwrap_or(Value::Null);
@@ -1073,7 +1100,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::IndexSet => {
                     let value = self.stack.pop().unwrap_or(Value::Null);
@@ -1104,7 +1131,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::GetField => {
                     let field = self.stack.pop().unwrap_or(Value::Null);
@@ -1124,7 +1151,7 @@ impl VM {
                             msg: "invalid field access".to_string(),
                         });
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::SetField => {
                     let value = self.stack.pop().unwrap_or(Value::Null);
@@ -1142,7 +1169,7 @@ impl VM {
                             msg: "invalid field assignment".to_string(),
                         });
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::EnumVariant => {
                     let value = self.stack.pop().unwrap_or(Value::Null);
@@ -1163,7 +1190,7 @@ impl VM {
                             msg: "invalid enum variant".to_string(),
                         });
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::IsEnumVariant => {
                     let variant = self.stack.pop().unwrap_or(Value::Null);
@@ -1176,7 +1203,7 @@ impl VM {
                     } else {
                         self.stack.push(Value::Bool(false));
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::GetEnumValue => {
                     let value = self.stack.pop().unwrap_or(Value::Null);
@@ -1194,17 +1221,17 @@ impl VM {
                             msg: "expected enum value".to_string(),
                         });
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Ref => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     self.stack.push(Value::Ref(Rc::new(RefCell::new(val))));
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::RefMut => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     self.stack.push(Value::MutRef(Rc::new(RefCell::new(val))));
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Deref => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1216,7 +1243,7 @@ impl VM {
                             self.stack.push(val);
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::IsOk => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1233,7 +1260,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::IsErr => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1250,7 +1277,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::IsSome => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1267,7 +1294,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::IsNone => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1284,7 +1311,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::UnwrapOk => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1312,7 +1339,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::UnwrapErr => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1340,7 +1367,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::UnwrapSome => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1370,7 +1397,7 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::MakeResult => {
                     let is_ok_byte = bytecode[ip + 1];
@@ -1380,7 +1407,7 @@ impl VM {
                         is_ok,
                         value: Box::new(val),
                     });
-                    self.call_stack[frame_idx].ip += 2;
+                    self.call_stack.last_mut().unwrap().ip += 2;
                 }
                 Op::MakeOption => {
                     let is_some_byte = bytecode[ip + 1];
@@ -1397,7 +1424,7 @@ impl VM {
                             value: None,
                         });
                     }
-                    self.call_stack[frame_idx].ip += 2;
+                    self.call_stack.last_mut().unwrap().ip += 2;
                 }
                 Op::Throw => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -1406,10 +1433,10 @@ impl VM {
                     if let Some(try_frame) = self.try_stack.pop() {
                         self.stack.truncate(try_frame.stack_height);
                         if let Some(finally_ip) = try_frame.finally_ip {
-                            self.call_stack[frame_idx].ip = finally_ip;
+                            self.call_stack.last_mut().unwrap().ip = finally_ip;
                         } else if let Some(catch_ip) = try_frame.catch_ip {
                             self.stack.push(val);
-                            self.call_stack[frame_idx].ip = catch_ip;
+                            self.call_stack.last_mut().unwrap().ip = catch_ip;
                         } else {
                             return Err(Error::Runtime {
             input: None,
@@ -1428,9 +1455,9 @@ impl VM {
                     }
                 }
                 Op::PushTry => {
-                    let catch_offset = self.read_i16(&bytecode, ip + 1);
-                    let finally_offset = self.read_i16(&bytecode, ip + 3);
-                    let end_offset = self.read_i16(&bytecode, ip + 5);
+                    let catch_offset = read_i16(bytecode, ip + 1);
+                    let finally_offset = read_i16(bytecode, ip + 3);
+                    let end_offset = read_i16(bytecode, ip + 5);
                     
                     let catch_ip = if catch_offset != 0 {
                         Some(((ip as i16) + catch_offset) as usize)
@@ -1450,11 +1477,11 @@ impl VM {
                         end_ip,
                         stack_height: self.stack.len(),
                     });
-                    self.call_stack[frame_idx].ip += 7;
+                    self.call_stack.last_mut().unwrap().ip += 7;
                 }
                 Op::PopTry => {
                     self.try_stack.pop();
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::Concat => {
                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1472,10 +1499,10 @@ impl VM {
                             })
                         }
                     }
-                    self.call_stack[frame_idx].ip += 1;
+                    self.call_stack.last_mut().unwrap().ip += 1;
                 }
                 Op::ListComp => {
-                    let func_idx = self.read_u16(&bytecode, ip + 1) as usize;
+                    let func_idx = read_u16(bytecode, ip + 1) as usize;
                     let iterable = self.stack.pop().unwrap_or(Value::Null);
                     let array = match iterable {
                         Value::Array(arr) => arr,
@@ -1490,7 +1517,7 @@ impl VM {
                     };
                     let elements = array.borrow().clone();
                     let mut result = Vec::new();
-                    let func_val = closure.borrow().func.constants[func_idx].clone();
+                    let func_val = closure_rc.borrow().func.constants[func_idx].clone();
 
                     for elem in &elements {
                         let func = match &func_val {
@@ -1548,21 +1575,29 @@ impl VM {
                         });
 
                         loop {
-                            let fi = self.call_stack.len() - 1;
-                            let fip = self.call_stack[fi].ip;
-                            let fclosure = self.call_stack[fi].closure.clone();
-                            let fbp = self.call_stack[fi].bp;
-                            let fbytecode = fclosure.borrow().func.bytecode.clone();
+                            let (fip, fbp, fbytecode_ptr, fbytecode_len, fclosure_rc) = {
+                                let fframe = self.call_stack.last().unwrap();
+                                let fclosure = fframe.closure.borrow();
+                                let fbytecode = &fclosure.func.bytecode;
+                                (
+                                    fframe.ip,
+                                    fframe.bp,
+                                    fbytecode.as_ptr(),
+                                    fbytecode.len(),
+                                    fframe.closure.clone(),
+                                )
+                            };
 
-                            if fip >= fbytecode.len() {
-                                let val = Value::Null;
+                            let fbytecode: &[u8] = unsafe { std::slice::from_raw_parts(fbytecode_ptr, fbytecode_len) };
+
+                            if fip >= fbytecode_len {
                                 self.stack.truncate(fbp);
                                 self.call_stack.pop();
-                                self.stack.push(val);
+                                self.stack.push(Value::Null);
                                 break;
                             }
 
-                            let fop = unsafe { std::mem::transmute::<u8, Op>(fbytecode[fip]) };
+                            let fop = unsafe { std::mem::transmute::<u8, Op>(*fbytecode_ptr.add(fip)) };
 
                             match fop {
                                 Op::Return => {
@@ -1573,35 +1608,35 @@ impl VM {
                                     break;
                                 }
                                 Op::Constant => {
-                                    let idx = self.read_u16(&fbytecode, fip + 1);
-                                    let val = fclosure.borrow().func.constants[idx as usize].clone();
+                                    let idx = read_u16(fbytecode, fip + 1);
+                                    let val = fclosure_rc.borrow().func.constants[idx as usize].clone();
                                     self.stack.push(val);
-                                    self.call_stack[fi].ip += 3;
+                                    self.call_stack.last_mut().unwrap().ip += 3;
                                 }
                                 Op::GetLocal => {
-                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let idx = read_u16(fbytecode, fip + 1);
                                     let stack_idx = fbp + idx as usize;
                                     self.stack.push(self.stack[stack_idx].clone());
-                                    self.call_stack[fi].ip += 3;
+                                    self.call_stack.last_mut().unwrap().ip += 3;
                                 }
                                 Op::SetLocal => {
-                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let idx = read_u16(fbytecode, fip + 1);
                                     let val = self.stack.pop().unwrap_or(Value::Null);
                                     let stack_idx = fbp + idx as usize;
                                     self.stack[stack_idx] = val;
-                                    self.call_stack[fi].ip += 3;
+                                    self.call_stack.last_mut().unwrap().ip += 3;
                                 }
                                 Op::Null => {
                                     self.stack.push(Value::Null);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::True => {
                                     self.stack.push(Value::Bool(true));
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::False => {
                                     self.stack.push(Value::Bool(false));
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Negate => {
                                     let a = self.stack.pop().unwrap_or(Value::Null);
@@ -1609,7 +1644,7 @@ impl VM {
                                         Value::Num(x) => self.stack.push(Value::Num(-x)),
                                         _ => self.stack.push(Value::Null),
                                     }
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Add => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1620,7 +1655,7 @@ impl VM {
                                         _ => Value::Null,
                                     };
                                     self.stack.push(res);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Sub => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1630,7 +1665,7 @@ impl VM {
                                         _ => Value::Null,
                                     };
                                     self.stack.push(res);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Mul => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1640,7 +1675,7 @@ impl VM {
                                         _ => Value::Null,
                                     };
                                     self.stack.push(res);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Div => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1652,23 +1687,23 @@ impl VM {
                                         _ => Value::Null,
                                     };
                                     self.stack.push(res);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Pop => {
                                     self.stack.pop();
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Eq => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
                                     let a = self.stack.pop().unwrap_or(Value::Null);
-                                    self.stack.push(Value::Bool(self.values_eq(&a, &b)));
-                                    self.call_stack[fi].ip += 1;
+                                    self.stack.push(Value::Bool(values_eq(&a, &b)));
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Neq => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
                                     let a = self.stack.pop().unwrap_or(Value::Null);
-                                    self.stack.push(Value::Bool(!self.values_eq(&a, &b)));
-                                    self.call_stack[fi].ip += 1;
+                                    self.stack.push(Value::Bool(!values_eq(&a, &b)));
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Lt => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1678,7 +1713,7 @@ impl VM {
                                         _ => Value::Bool(false),
                                     };
                                     self.stack.push(res);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Gt => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1688,7 +1723,7 @@ impl VM {
                                         _ => Value::Bool(false),
                                     };
                                     self.stack.push(res);
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::GetField => {
                                     let field = self.stack.pop().unwrap_or(Value::Null);
@@ -1703,7 +1738,7 @@ impl VM {
                                     } else {
                                         self.stack.push(Value::Null);
                                     }
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::Index => {
                                     let index = self.stack.pop().unwrap_or(Value::Null);
@@ -1720,11 +1755,11 @@ impl VM {
                                         }
                                         _ => self.stack.push(Value::Null),
                                     }
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 Op::GetFree => {
-                                    let idx = self.read_u16(&fbytecode, fip + 1);
-                                    let upvalues = &fclosure.borrow().upvalues;
+                                    let idx = read_u16(fbytecode, fip + 1);
+                                    let upvalues = &fclosure_rc.borrow().upvalues;
                                     if idx as usize >= upvalues.len() {
                                         self.stack.push(Value::Null);
                                     } else {
@@ -1735,12 +1770,12 @@ impl VM {
                                         };
                                         self.stack.push(val);
                                     }
-                                    self.call_stack[fi].ip += 3;
+                                    self.call_stack.last_mut().unwrap().ip += 3;
                                 }
                                 Op::CaptureGlobal => {
-                                    let idx = self.read_u16(&fbytecode, fip + 1);
+                                    let idx = read_u16(fbytecode, fip + 1);
                                     self.stack.push(Value::Num(-(idx as f64 + 1.0)));
-                                    self.call_stack[fi].ip += 3;
+                                    self.call_stack.last_mut().unwrap().ip += 3;
                                 }
                                 Op::Concat => {
                                     let b = self.stack.pop().unwrap_or(Value::Null);
@@ -1751,10 +1786,10 @@ impl VM {
                                         }
                                         _ => self.stack.push(Value::Null),
                                     }
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                                 _ => {
-                                    self.call_stack[fi].ip += 1;
+                                    self.call_stack.last_mut().unwrap().ip += 1;
                                 }
                             }
                         }
@@ -1763,93 +1798,89 @@ impl VM {
                         result.push(res);
                     }
                     self.stack.push(Value::Array(Rc::new(RefCell::new(result))));
-                    self.call_stack[frame_idx].ip += 3;
+                    self.call_stack.last_mut().unwrap().ip += 3;
                 }
             }
         }
     }
+}
 
-    fn read_u16(&self, bytecode: &[u8], pos: usize) -> u16 {
-        ((bytecode[pos + 1] as u16) << 8) | (bytecode[pos] as u16)
+#[inline]
+fn is_truthy(val: &Value) -> bool {
+    match val {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        _ => true,
     }
+}
 
-    fn read_i16(&self, bytecode: &[u8], pos: usize) -> i16 {
-        self.read_u16(bytecode, pos) as i16
-    }
-
-    fn is_truthy(&self, val: &Value) -> bool {
-        match val {
-            Value::Null => false,
-            Value::Bool(b) => *b,
-            _ => true,
-        }
-    }
-
-    fn values_eq(&self, a: &Value, b: &Value) -> bool {
-        match (a, b) {
-            (Value::Null, Value::Null) => true,
-            (Value::Bool(x), Value::Bool(y)) => x == y,
-            (Value::Num(x), Value::Num(y)) => x == y,
-            (Value::Str(x), Value::Str(y)) => x == y,
-            (Value::Array(x), Value::Array(y)) => {
-                if x.borrow().len() != y.borrow().len() {
+#[inline]
+fn values_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Num(x), Value::Num(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Array(x), Value::Array(y)) => {
+            let xb = x.borrow();
+            let yb = y.borrow();
+            if xb.len() != yb.len() {
+                return false;
+            }
+            for (xv, yv) in xb.iter().zip(yb.iter()) {
+                if !values_eq(xv, yv) {
                     return false;
                 }
-                for (xv, yv) in x.borrow().iter().zip(y.borrow().iter()) {
-                    if !self.values_eq(xv, yv) {
+            }
+            true
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            let xm = x.borrow();
+            let ym = y.borrow();
+            if xm.len() != ym.len() {
+                return false;
+            }
+            for (k, xv) in xm.iter() {
+                if let Some(yv) = ym.get(k) {
+                    if !values_eq(xv, yv) {
                         return false;
                     }
-                }
-                true
-            }
-            (Value::Object(x), Value::Object(y)) => {
-                let xm = x.borrow();
-                let ym = y.borrow();
-                if xm.len() != ym.len() {
+                } else {
                     return false;
                 }
-                for (k, xv) in xm.iter() {
-                    if let Some(yv) = ym.get(k) {
-                        if !self.values_eq(xv, yv) {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-                true
             }
-            (Value::Enum { enum_name: xn, variant: xv, value: xval },
-             Value::Enum { enum_name: yn, variant: yv, value: yval }) => {
-                if xn != yn || xv != yv {
-                    return false;
-                }
-                match (xval, yval) {
-                    (Some(x), Some(y)) => self.values_eq(x, y),
-                    (None, None) => true,
-                    _ => false,
-                }
-            }
-            (Value::Result { is_ok: x_ok, value: xval },
-             Value::Result { is_ok: y_ok, value: yval }) => {
-                x_ok == y_ok && self.values_eq(xval, yval)
-            }
-            (Value::Option { is_some: x_some, value: xval },
-             Value::Option { is_some: y_some, value: yval }) => {
-                if x_some != y_some {
-                    return false;
-                }
-                match (xval, yval) {
-                    (Some(x), Some(y)) => self.values_eq(x, y),
-                    (None, None) => true,
-                    _ => false,
-                }
-            }
-            (Value::Ref(x), Value::Ref(y)) | (Value::MutRef(x), Value::MutRef(y)) => {
-                Rc::ptr_eq(x, y)
-            }
-            _ => false,
+            true
         }
+        (Value::Enum { enum_name: xn, variant: xv, value: xval },
+         Value::Enum { enum_name: yn, variant: yv, value: yval }) => {
+            if xn != yn || xv != yv {
+                return false;
+            }
+            match (xval, yval) {
+                (Some(x), Some(y)) => values_eq(x, y),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        (Value::Result { is_ok: x_ok, value: xval },
+         Value::Result { is_ok: y_ok, value: yval }) => {
+            x_ok == y_ok && values_eq(xval, yval)
+        }
+        (Value::Option { is_some: x_some, value: xval },
+         Value::Option { is_some: y_some, value: yval }) => {
+            if x_some != y_some {
+                return false;
+            }
+            match (xval, yval) {
+                (Some(x), Some(y)) => values_eq(x, y),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        (Value::Ref(x), Value::Ref(y)) | (Value::MutRef(x), Value::MutRef(y)) => {
+            Rc::ptr_eq(x, y)
+        }
+        _ => false,
     }
 }
 
