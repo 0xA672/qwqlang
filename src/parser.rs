@@ -154,7 +154,7 @@ impl<'a> P<'a> {
             _ => Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: format!("expected destruct pattern, got {:?}", tok),
+                msg: format!("expected destruct pattern, got {}", tok.describe()),
                 input: self.input.to_string(),
             }),
         }
@@ -301,7 +301,7 @@ impl<'a> P<'a> {
             input: None,
             filename: None,
                     pos,
-                    msg: "expected 'in' in for loop".to_string(),
+                    msg: format!("expected 'in' in for loop, found {}", self.cur.describe()),
                 });
             }
         }
@@ -493,7 +493,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected '{'".to_string(),
+                msg: format!("expected '{{', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -625,7 +625,7 @@ impl<'a> P<'a> {
             _ => Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: format!("unexpected token in pattern: {:?}", tok),
+                msg: format!("unexpected token in pattern: {}", tok.describe()),
                 input: self.input.to_string(),
             }),
         }
@@ -1155,7 +1155,7 @@ impl<'a> P<'a> {
                         return Err(Error::Syntax {
             filename: None,
                             pos,
-                            msg: "expected identifier before '::'".to_string(),
+                            msg: format!("expected identifier before '::', found {}", self.cur.describe()),
                             input: self.input.to_string(),
                         });
                     }
@@ -1259,7 +1259,7 @@ impl<'a> P<'a> {
             _ => Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: format!("unexpected token {:?}", tok),
+                msg: format!("unexpected token {}", tok.describe()),
                 input: self.input.to_string(),
             }),
         }
@@ -1336,7 +1336,7 @@ impl<'a> P<'a> {
                     return Err(Error::Syntax {
             filename: None,
                         pos: self.pos(),
-                        msg: "expected 'in' after 'for' in list comprehension".to_string(),
+                        msg: format!("expected 'in' after 'for' in list comprehension, found {}", self.cur.describe()),
                         input: self.input.to_string(),
                     });
                 }
@@ -1443,7 +1443,7 @@ impl<'a> P<'a> {
             return Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected '|' after arrow function parameters".to_string(),
+                msg: format!("expected '|>' after arrow function parameters, found {}", self.cur.describe()),
                 input: self.input.to_string(),
             });
         }
@@ -1481,7 +1481,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected identifier".to_string(),
+                msg: format!("expected identifier, found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1495,7 +1495,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected '='".to_string(),
+                msg: format!("expected '=', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1509,7 +1509,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected '('".to_string(),
+                msg: format!("expected '(', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1523,7 +1523,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected ')'".to_string(),
+                msg: format!("expected ')', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1537,7 +1537,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected ';'".to_string(),
+                msg: format!("expected ';', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1551,7 +1551,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected '}'".to_string(),
+                msg: format!("expected '}}', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1565,7 +1565,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected ':'".to_string(),
+                msg: format!("expected ':', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1579,7 +1579,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected ']'".to_string(),
+                msg: format!("expected ']', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1593,7 +1593,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected 'loop'".to_string(),
+                msg: format!("expected 'loop', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }
@@ -1607,7 +1607,7 @@ impl<'a> P<'a> {
             Err(Error::Syntax {
             filename: None,
                 pos: self.pos(),
-                msg: "expected '=>'".to_string(),
+                msg: format!("expected '=>', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
         }

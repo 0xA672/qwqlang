@@ -69,6 +69,76 @@ pub enum Tok {
     Eof(Pos),
 }
 
+impl Tok {
+    pub fn describe(&self) -> String {
+        match self {
+            Tok::Let(_) => "keyword 'let'".to_string(),
+            Tok::Mut(_) => "keyword 'mut'".to_string(),
+            Tok::Fn(_) => "keyword 'fn'".to_string(),
+            Tok::If(_) => "keyword 'if'".to_string(),
+            Tok::Else(_) => "keyword 'else'".to_string(),
+            Tok::True(_) => "'true'".to_string(),
+            Tok::False(_) => "'false'".to_string(),
+            Tok::Null(_) => "'null'".to_string(),
+            Tok::Return(_) => "keyword 'return'".to_string(),
+            Tok::And(_) => "keyword 'and'".to_string(),
+            Tok::Or(_) => "keyword 'or'".to_string(),
+            Tok::Loop(_) => "keyword 'loop'".to_string(),
+            Tok::Break(_) => "keyword 'break'".to_string(),
+            Tok::Continue(_) => "keyword 'continue'".to_string(),
+            Tok::While(_) => "keyword 'while'".to_string(),
+            Tok::For(_) => "keyword 'for'".to_string(),
+            Tok::In(_) => "keyword 'in'".to_string(),
+            Tok::Match(_) => "keyword 'match'".to_string(),
+            Tok::Enum(_) => "keyword 'enum'".to_string(),
+            Tok::Struct(_) => "keyword 'struct'".to_string(),
+            Tok::Throw(_) => "keyword 'throw'".to_string(),
+            Tok::Try(_) => "keyword 'try'".to_string(),
+            Tok::Catch(_) => "keyword 'catch'".to_string(),
+            Tok::Finally(_) => "keyword 'finally'".to_string(),
+            Tok::Ok(_) => "keyword 'Ok'".to_string(),
+            Tok::Err(_) => "keyword 'Err'".to_string(),
+            Tok::Some(_) => "keyword 'Some'".to_string(),
+            Tok::None(_) => "keyword 'None'".to_string(),
+            Tok::Ident(s, _) => format!("identifier '{}'", s),
+            Tok::Label(s, _) => format!("label '{}'", s),
+            Tok::Num(n, _) => format!("number {}", n),
+            Tok::Str(s, _) => format!("string \"{}\"", s),
+            Tok::TemplateStr(s, _) => format!("template string \"{}\"", s),
+            Tok::Dollar(_) => "'$'".to_string(),
+            Tok::Spread(_) => "'..'".to_string(),
+            Tok::Add(_) => "'+'".to_string(),
+            Tok::Sub(_) => "'-'".to_string(),
+            Tok::Mul(_) => "'*'".to_string(),
+            Tok::Div(_) => "'/'".to_string(),
+            Tok::Eq(_) => "'=='".to_string(),
+            Tok::Neq(_) => "'!='".to_string(),
+            Tok::Lt(_) => "'<'".to_string(),
+            Tok::Gt(_) => "'>'".to_string(),
+            Tok::Lte(_) => "'<='".to_string(),
+            Tok::Gte(_) => "'>='".to_string(),
+            Tok::Assign(_) => "'='".to_string(),
+            Tok::Pipe(_) => "'|>'".to_string(),
+            Tok::PipeSingle(_) => "'|>'".to_string(),
+            Tok::LParen(_) => "'('".to_string(),
+            Tok::RParen(_) => "')'".to_string(),
+            Tok::LBrace(_) => "'{'".to_string(),
+            Tok::RBrace(_) => "'}'".to_string(),
+            Tok::Semicolon(_) => "';'".to_string(),
+            Tok::Comma(_) => "','".to_string(),
+            Tok::LBracket(_) => "'['".to_string(),
+            Tok::RBracket(_) => "']'".to_string(),
+            Tok::Ref(_) => "'&'".to_string(),
+            Tok::Dot(_) => "'.'".to_string(),
+            Tok::Colon(_) => "':'".to_string(),
+            Tok::DoubleColon(_) => "'::'".to_string(),
+            Tok::FatArrow(_) => "'->'".to_string(),
+            Tok::Question(_) => "'?'".to_string(),
+            Tok::Eof(_) => "end of file".to_string(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Lex<'a> {
     chars: Peekable<Chars<'a>>,
@@ -264,6 +334,7 @@ impl<'a> Lex<'a> {
                             }
                         }
                         c if c.is_alphabetic() || c == '_' => {
+                            self.col += 1;
                             let ident = self.identifier_start(c);
                             let tok = match ident.as_str() {
                                 "let" => Tok::Let(pos),
@@ -299,6 +370,7 @@ impl<'a> Lex<'a> {
                             return tok;
                         }
                         c if c.is_ascii_digit() => {
+                            self.col += 1;
                             let num = self.number(c);
                             return Tok::Num(num, pos);
                         }
