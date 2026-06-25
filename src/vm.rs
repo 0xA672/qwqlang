@@ -476,6 +476,7 @@ pub struct VM {
     open_upvalues: Vec<Rc<RefCell<Upvalue>>>,
     try_stack: Vec<TryFrame>,
     exception: Option<Value>,
+    pending_return: Option<Value>,
 }
 
 impl VM {
@@ -487,6 +488,7 @@ impl VM {
             open_upvalues: Vec::new(),
             try_stack: Vec::new(),
             exception: None,
+            pending_return: None,
         };
         vm.globals.push(Value::Builtin(builtin_print));
         vm.globals.push(Value::Builtin(builtin_len));
@@ -1017,12 +1019,56 @@ impl VM {
                 }
                 Op::Return => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
-                    let frame = self.call_stack.pop().unwrap();
-                    self.stack.truncate(frame.bp);
-                    if self.call_stack.is_empty() {
-                        return Ok(val);
+                    
+                    // Check for finally blocks - if any exist, run them before returning
+                    if !self.try_stack.is_empty() {
+                        // There are finally blocks - store the return value
+                        self.pending_return = Some(val.clone());
+                        
+                        // Jump to finally (keep frame on stack - CompleteReturn will pop it)
+                        let try_frame = self.try_stack.pop().unwrap();
+                        let jump_target = try_frame.finally_ip.unwrap_or(try_frame.end_ip);
+                        
+                        self.call_stack.last_mut().unwrap().ip = jump_target;
+                        
+                        // Restore stack height and push return value for finally to access
+                        self.stack.truncate(try_frame.stack_height);
+                        self.stack.push(val);
+                    } else {
+                        // No finally blocks, do normal return
+                        let frame = self.call_stack.pop().unwrap();
+                        self.stack.truncate(frame.bp);
+                        if self.call_stack.is_empty() {
+                            return Ok(val);
+                        }
+                        self.stack.push(val);
                     }
-                    self.stack.push(val);
+                }
+                Op::CompleteReturn => {
+                    // Called at end of finally block to complete the pending return
+                    if let Some(val) = self.pending_return.take() {
+                        // Check if there are more finally blocks to run
+                        if !self.try_stack.is_empty() {
+                            // More finally blocks - store value and jump to next
+                            self.pending_return = Some(val.clone());
+                            let try_frame = self.try_stack.pop().unwrap();
+                            self.call_stack.last_mut().unwrap().ip = try_frame.finally_ip.unwrap_or(try_frame.end_ip);
+                            self.stack.truncate(try_frame.stack_height);
+                            self.stack.push(val);
+                        } else {
+                            // No more finally blocks - pop frame and complete the return
+                            let frame = self.call_stack.pop().unwrap();
+                            self.stack.truncate(frame.bp);
+                            
+                            if self.call_stack.is_empty() {
+                                return Ok(val);
+                            }
+                            self.stack.push(val);
+                        }
+                    } else {
+                        // No pending return - just continue normally
+                        self.call_stack.last_mut().unwrap().ip += 1;
+                    }
                 }
                 Op::GetBuiltin => {
                     let idx = read_u16(bytecode, ip + 1);
