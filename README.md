@@ -133,8 +133,8 @@ let tmpl = `Hello, ${name}!`;   // "Hello, World!"
 ```
 let arr = [1, 2, 3];
 arr[0]        // 1
-push(arr, 4); // arr is now [1, 2, 3, 4]
-len(arr)      // 4
+arr, 4 |> push // arr is now [1, 2, 3, 4]
+arr |> len     // 4
 
 let obj = { x: 10, y: 20 };
 obj.x         // 10
@@ -166,12 +166,12 @@ while (i < 3) { i = i + 1; }
 
 // For loop (C-style)
 for (mut i = 0; i < 5; i = i + 1) {
-    print(i);
+    i |> print;
 }
 
 // For-in loop
 for (x in [1, 2, 3]) {
-    print(x);
+    x |> print;
 }
 ```
 
@@ -185,11 +185,11 @@ let doubled = [x * 2 for x in [1, 2, 3]];   // [2, 4, 6]
 
 ```
 fn add(x, y) { x + y; }
-add(3, 4)   // 7
+3, 4 |> add   // 7
 
 // Arrow syntax
 let double = |x| x * 2;
-double(5)   // 10
+5 |> double   // 10
 ```
 
 ### Cwosuwes & Expwicit Captuwes
@@ -199,8 +199,8 @@ mut x = 0;
 let inc = fn() [mut x] {
     x = x + 1;
 };
-inc();
-inc();
+|> inc;
+|> inc;
 x   // 2
 ```
 
@@ -229,8 +229,8 @@ let z = &x;    // multiple shared borrows OK
 ### Logicaw Showt‑Ciwcuit
 
 ```
-false and print("no")   // false, print not called
-true or  print("no")    // true,  print not called
+false and "no" |> print   // false, print not called
+true or  "no" |> print    // true,  print not called
 true and 42             // 42
 false or "hello"        // "hello"
 ```
@@ -264,20 +264,20 @@ fn safe_div(a, b) {
     }
 }
 
-let r = safe_div(10, 2);
-is_ok(r)    // true
-unwrap(r)   // 5
+let r = 10, 2 |> safe_div;
+r |> is_ok    // true
+r |> unwrap   // 5
 
 // ? operator propagates errors
 fn compute(x) {
-    let y = safe_div(x, 2)?;
+    let y = (x, 2 |> safe_div)?;
     Ok(y + 1)
 }
 
 let o = Some(42);
-is_some(o)     // true
-unwrap_or(o, 0) // 42
-unwrap_or(None, 0) // 0
+o |> is_some     // true
+o, 0 |> unwrap_or // 42
+None, 0 |> unwrap_or // 0
 ```
 
 ### Exceptions
@@ -286,9 +286,9 @@ unwrap_or(None, 0) // 0
 try {
     throw "oops";
 } catch (e) {
-    print(e);   // "oops"
+    e |> print;   // "oops"
 } finally {
-    print("done");
+    "done" |> print;
 }
 ```
 
