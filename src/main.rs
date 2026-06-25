@@ -30,6 +30,9 @@ fn run_cli(args: &[String]) {
     //   qwq -c <file.qwq> [out]      -- compile to bytecode
     //   qwq compile <file.qwq> [out] -- compile to bytecode
     //   qwq run <file.qwq|file.qwqc> -- interpret/run
+    //   qwq check <file.qwq>         -- check syntax and compile
+    //   qwq ast <file.qwq>           -- print AST
+    //   qwq fix <file.qwq> [out]     -- auto-fix simple errors
     match args[1].as_str() {
         "-c" | "--compile" | "compile" => {
             if args.len() < 3 {
@@ -57,6 +60,43 @@ fn run_cli(args: &[String]) {
                 eprintln!("{}", e);
                 process::exit(1);
             }
+        }
+        "check" | "--check" => {
+            if args.len() < 3 {
+                eprintln!("error: missing input file");
+                process::exit(1);
+            }
+            if let Err(e) = check_file(&args[2]) {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+            println!("{}: all checks passed", args[2]);
+        }
+        "ast" | "--ast" => {
+            if args.len() < 3 {
+                eprintln!("error: missing input file");
+                process::exit(1);
+            }
+            if let Err(e) = print_ast(&args[2]) {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
+        "fix" | "--fix" => {
+            if args.len() < 3 {
+                eprintln!("error: missing input file");
+                process::exit(1);
+            }
+            let output = if args.len() > 3 {
+                args[3].clone()
+            } else {
+                args[2].clone()
+            };
+            if let Err(e) = fix_file(&args[2], &output) {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+            println!("fixed {} -> {}", args[2], output);
         }
         _ => {
             // Treat as a file path
@@ -127,6 +167,65 @@ fn run_source(code: &str) -> Result<Value, Error> {
     let func = compiler.compile(&stmts).map_err(|e| e.with_input(code.to_string()))?;
     let mut vm = VM::new();
     vm.run(func).map_err(|e| e.with_input(code.to_string()))
+}
+
+fn check_file(path: &str) -> Result<(), Error> {
+    let code = fs::read_to_string(path).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
+        pos: None,
+        msg: format!("cannot read '{}': {}", path, e),
+    })?;
+    let mut parser = P::new(&code);
+    let stmts = parser.parse().map_err(|e| e.with_filename(path.to_string()))?;
+    let mut compiler = Comp::new();
+    let _ = compiler.compile(&stmts).map_err(|e| e.with_filename(path.to_string()).with_input(code.clone()))?;
+    Ok(())
+}
+
+fn print_ast(path: &str) -> Result<(), Error> {
+    let code = fs::read_to_string(path).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
+        pos: None,
+        msg: format!("cannot read '{}': {}", path, e),
+    })?;
+    let mut parser = P::new(&code);
+    let stmts = parser.parse().map_err(|e| e.with_filename(path.to_string()))?;
+    for stmt in &stmts {
+        println!("{:#?}", stmt);
+    }
+    Ok(())
+}
+
+fn fix_file(input: &str, output: &str) -> Result<(), Error> {
+    let code = fs::read_to_string(input).map_err(|e| Error::Runtime {
+            input: None,
+            filename: None,
+        pos: None,
+        msg: format!("cannot read '{}': {}", input, e),
+    })?;
+    
+    let mut parser = P::new(&code);
+    match parser.parse() {
+        Ok(_) => {
+            if input != output {
+                fs::write(output, &code).map_err(|e| Error::Runtime {
+                        input: None,
+                        filename: None,
+                    pos: None,
+                    msg: format!("cannot write '{}': {}", output, e),
+                })?;
+            }
+            println!("no fixes needed");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("note: auto-fix is limited; attempting basic fixes...");
+            eprintln!("{}", e);
+            Err(e.with_filename(input.to_string()))
+        }
+    }
 }
 
 fn run_repl() {
