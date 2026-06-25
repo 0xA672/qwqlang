@@ -63,6 +63,7 @@ pub enum Op {
     Throw = 52,
     PushTry = 53,
     PopTry = 54,
+    CompleteReturn = 57,
     // String operations
     Concat = 55,
     ListComp = 56,
@@ -546,6 +547,8 @@ impl Comp {
                 self.emit_u16(0); // Placeholder for catch handler offset
                 let finally_jump_offset_pos = self.bytecode.len();
                 self.emit_u16(0); // Placeholder for finally handler offset
+                let end_offset_pos = self.bytecode.len();
+                self.emit_u16(0); // Placeholder for end offset
                 
                 // Execute try block
                 self.stmt(try_blk)?;
@@ -598,13 +601,20 @@ impl Comp {
                 
                 // Finally handler
                 let finally_start = self.bytecode.len();
-                // Patch the finally offset
-                let finally_offset = finally_start - finally_jump_offset_pos;
+                // Patch the finally offset - add 3 for the jump instruction size to point to after the jump
+                let finally_offset = finally_start - finally_jump_offset_pos + 3;
                 self.bytecode[finally_jump_offset_pos] = (finally_offset & 0xff) as u8;
                 self.bytecode[finally_jump_offset_pos + 1] = ((finally_offset >> 8) & 0xff) as u8;
                 
+                // Patch the end offset
+                let end_offset = finally_start - end_offset_pos;
+                self.bytecode[end_offset_pos] = (end_offset & 0xff) as u8;
+                self.bytecode[end_offset_pos + 1] = ((end_offset >> 8) & 0xff) as u8;
+                
                 if let Some(finally_blk) = finally_blk {
                     self.stmt(finally_blk)?;
+                    // Emit CompleteReturn at end of finally to handle pending returns
+                    self.emit_op(Op::CompleteReturn);
                 }
                 
                 // Patch jumps
