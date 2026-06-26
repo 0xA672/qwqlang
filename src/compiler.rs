@@ -86,7 +86,6 @@ pub struct Comp {
 struct FuncCtx {
     locals: Vec<(String, bool)>,
     free: Vec<(String, bool)>,
-    captures: HashSet<String>,
 }
 
 impl Comp {
@@ -1172,6 +1171,14 @@ impl Comp {
                     UnaryOp::Deref => self.emit_op(Op::Deref),
                 }
             }
+            Expr::Call { callee, args, .. } => {
+                self.expr(callee)?;
+                for arg in args {
+                    self.expr(arg)?;
+                }
+                self.emit_op(Op::Call);
+                self.emit_u16(args.len() as u16);
+            }
             Expr::Pipe {
                 args,
                 func,
@@ -1200,6 +1207,21 @@ impl Comp {
                     }
                     self.emit_op(Op::Call);
                     self.emit_u16(args.len() as u16);
+                } else if let Expr::Call {
+                    callee,
+                    args: call_args,
+                    ..
+                } = &**func
+                {
+                    self.expr(callee)?;
+                    for arg in args {
+                        self.expr(arg)?;
+                    }
+                    for arg in call_args {
+                        self.expr(arg)?;
+                    }
+                    self.emit_op(Op::Call);
+                    self.emit_u16((args.len() + call_args.len()) as u16);
                 } else {
                     self.expr(func)?;
                     for arg in args {
@@ -1265,7 +1287,7 @@ impl Comp {
     fn compile_func(
         &mut self,
         params: &[String],
-        captures: &[String],
+        _captures: &[String],
         body: &Stmt,
         pos: Pos,
     ) -> Result<(), Error> {
@@ -1279,11 +1301,6 @@ impl Comp {
 
         for param in params {
             self.locals.push((param.clone(), false));
-        }
-
-        let mut capture_set = HashSet::new();
-        for cap in captures {
-            capture_set.insert(cap.clone());
         }
 
         let mut vars_used = HashSet::new();
@@ -1300,33 +1317,13 @@ impl Comp {
                 continue;
             }
             if let Some((is_mut, _is_local)) = self.find_var(var, &saved_locals, &saved_free) {
-                if is_mut && !capture_set.contains(var) {
-                    return Err(Error::Compile {
-            input: None,
-            filename: None,
-                        pos,
-                        msg: format!("mutable variable '{}' must be explicitly captured", var),
-                    });
-                }
                 self.free.push((var.clone(), is_mut));
-            }
-        }
-
-        for cap in captures {
-            if !self.free.iter().any(|(n, _)| n == cap) {
-                return Err(Error::Compile {
-            input: None,
-            filename: None,
-                    pos,
-                    msg: format!("capture '{}' is not used in closure", cap),
-                });
             }
         }
 
         self.func_stack.push(FuncCtx {
             locals: saved_locals.clone(),
             free: saved_free.clone(),
-            captures: capture_set,
         });
 
         let saved_bytecode = std::mem::take(&mut self.bytecode);
@@ -1401,7 +1398,6 @@ impl Comp {
         self.func_stack.push(FuncCtx {
             locals: saved_locals.clone(),
             free: saved_free.clone(),
-            captures: HashSet::new(),
         });
 
         let saved_bytecode = std::mem::take(&mut self.bytecode);

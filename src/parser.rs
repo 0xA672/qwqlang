@@ -699,7 +699,7 @@ impl<'a> P<'a> {
                 _ => unreachable!(),
             };
             self.consume();
-            let func = self.equality()?;
+            let func = self.pipe_target()?;
             let has_placeholder = self.has_placeholder(&func);
 
             // Check for chained nullary pipe: |> f |> g
@@ -741,7 +741,7 @@ impl<'a> P<'a> {
                     args.push(self.equality()?);
                 }
 
-                let func = self.equality()?;
+                let func = self.pipe_target()?;
                 let has_placeholder = self.has_placeholder(&func);
 
                 let pipe_expr = Expr::Pipe {
@@ -778,7 +778,7 @@ impl<'a> P<'a> {
                 if matches!(self.cur, Tok::Pipe(_)) {
                     self.consume();
 
-                    let func = self.equality()?;
+                    let func = self.pipe_target()?;
                     let has_placeholder = self.has_placeholder(&func);
 
                     let pipe_expr = Expr::Pipe {
@@ -813,6 +813,28 @@ impl<'a> P<'a> {
         }
     }
 
+    fn pipe_target(&mut self) -> Result<Expr, Error> {
+        let mut func = self.equality()?;
+        if let Tok::LParen(pos) = self.cur.clone() {
+            self.consume();
+            let mut args = Vec::new();
+            if !matches!(self.cur, Tok::RParen(_)) {
+                args.push(self.expr()?);
+                while matches!(self.cur, Tok::Comma(_)) {
+                    self.consume();
+                    args.push(self.expr()?);
+                }
+            }
+            self.expect_rparen()?;
+            func = Expr::Call {
+                callee: Box::new(func),
+                args,
+                pos,
+            };
+        }
+        Ok(func)
+    }
+
     fn has_placeholder(&self, e: &Expr) -> bool {
         match e {
             Expr::Ident(name, _) => name == "_",
@@ -820,6 +842,9 @@ impl<'a> P<'a> {
                 self.has_placeholder(left) || self.has_placeholder(right)
             }
             Expr::UnaryOp { expr, .. } => self.has_placeholder(expr),
+            Expr::Call { callee, args, .. } => {
+                self.has_placeholder(callee) || args.iter().any(|arg| self.has_placeholder(arg))
+            }
             Expr::Pipe { func, .. } => self.has_placeholder(func),
             Expr::Func { body, .. } => self.has_placeholder_in_stmt(body),
             Expr::Arrow { body, .. } => self.has_placeholder(body),

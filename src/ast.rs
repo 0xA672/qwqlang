@@ -162,6 +162,11 @@ pub enum Expr {
         expr: Box<Expr>,
         pos: Pos,
     },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        pos: Pos,
+    },
     Func {
         params: Vec<String>,
         captures: Vec<String>,
@@ -247,5 +252,58 @@ pub enum UnaryOp {
 impl fmt::Display for Pos {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}:{}", self.line, self.col)
+    }
+}
+
+impl Stmt {
+    pub fn pos(&self) -> Pos {
+        match self {
+            Stmt::Let { pos, .. }
+            | Stmt::Mut { pos, .. }
+            | Stmt::Assign { pos, .. }
+            | Stmt::If { pos, .. }
+            | Stmt::Loop { pos, .. }
+            | Stmt::While { pos, .. }
+            | Stmt::For { pos, .. }
+            | Stmt::ForIn { pos, .. }
+            | Stmt::Break { pos, .. }
+            | Stmt::Continue { pos, .. }
+            | Stmt::Return { pos, .. }
+            | Stmt::Throw { pos, .. }
+            | Stmt::Try { pos, .. } => *pos,
+            Stmt::Block(stmts) => stmts
+                .first()
+                .map(Stmt::pos)
+                .unwrap_or(Pos { line: 1, col: 1 }),
+            Stmt::Expr(expr) => expr.pos(),
+        }
+    }
+}
+
+impl Expr {
+    pub fn pos(&self) -> Pos {
+        match self {
+            Expr::Null(pos)
+            | Expr::Bool(_, pos)
+            | Expr::Num(_, pos)
+            | Expr::Str(_, pos)
+            | Expr::TemplateStr(_, pos)
+            | Expr::Ident(_, pos)
+            | Expr::Array(_, pos) => *pos,
+            Expr::ListComp { pos, .. }
+            | Expr::Index { pos, .. }
+            | Expr::Object(_, pos)
+            | Expr::Field { pos, .. }
+            | Expr::EnumVariant { pos, .. }
+            | Expr::Match { pos, .. }
+            | Expr::Result { pos, .. }
+            | Expr::Option { pos, .. }
+            | Expr::TryExpr { pos, .. }
+            | Expr::BinOp { pos, .. }
+            | Expr::UnaryOp { pos, .. }
+            | Expr::Func { pos, .. }
+            | Expr::Arrow { pos, .. }
+            | Expr::Pipe { pos, .. } => *pos,
+        }
     }
 }

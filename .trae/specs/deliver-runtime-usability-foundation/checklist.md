@@ -1,0 +1,8 @@
+- [ ] File-based `import` loads sibling modules and reuses cached modules within one process.
+- [ ] Runtime failures report source file and line information for the failing instruction.
+- [ ] Runtime failures report a call stack when execution crosses function boundaries.
+- [ ] Closures work without required explicit capture lists, including mutable outer bindings.
+- [ ] Pipe expressions support both `lhs |> f` and `lhs |> f(a, b)` semantics.
+- [ ] The REPL reuses globals, functions, and imported modules across submissions.
+- [ ] `.trae/` is ignored by Git by default.
+- [ ] The focused validation and full `cargo test` suite pass after implementation.
