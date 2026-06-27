@@ -14,7 +14,8 @@ fn assert_eq_value(a: Value, b: Value) {
 fn array_literal() {
     let result = execute("[1, 2, 3]").unwrap();
     match result {
-        Value::Arr(a) => {
+        Value::Array(arr) => {
+            let a = arr.borrow();
             assert_eq!(a.len(), 3);
             assert_eq_value(a[0].clone(), Value::Num(1.0));
             assert_eq_value(a[1].clone(), Value::Num(2.0));
@@ -25,7 +26,7 @@ fn array_literal() {
 
     let result = execute("[]").unwrap();
     match result {
-        Value::Arr(a) => assert_eq!(a.len(), 0),
+        Value::Array(arr) => assert_eq!(arr.borrow().len(), 0),
         _ => panic!("expected empty array"),
     }
 }
@@ -46,7 +47,8 @@ fn subscript_access() {
 fn dict_literal() {
     let result = execute(r#"{"a" = 1, "b" = 2}"#).unwrap();
     match result {
-        Value::Dict(d) => {
+        Value::Object(obj) => {
+            let d = obj.borrow();
             assert_eq!(d.len(), 2);
         }
         _ => panic!("expected dict"),
