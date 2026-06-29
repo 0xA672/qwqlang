@@ -104,6 +104,15 @@ impl Comp {
         builtins.insert("unwrap_or".to_string(), 9);
         let mut globals = HashMap::new();
         globals.insert("print".to_string(), (0, false));
+        globals.insert("len".to_string(), (1, false));
+        globals.insert("push".to_string(), (2, false));
+        globals.insert("pop".to_string(), (3, false));
+        globals.insert("is_ok".to_string(), (4, false));
+        globals.insert("is_err".to_string(), (5, false));
+        globals.insert("is_some".to_string(), (6, false));
+        globals.insert("is_none".to_string(), (7, false));
+        globals.insert("unwrap".to_string(), (8, false));
+        globals.insert("unwrap_or".to_string(), (9, false));
         Comp {
             bytecode: Vec::new(),
             constants: Vec::new(),
@@ -113,7 +122,7 @@ impl Comp {
             free: Vec::new(),
             loop_stack: Vec::new(),
             func_stack: Vec::new(),
-            next_global: 1,
+            next_global: 10,
         }
     }
 
@@ -446,12 +455,14 @@ impl Comp {
                 let arr_ident = format!("__arr_{}", pos.line);
                 let idx_ident = format!("__idx_{}", pos.line);
 
+                // let __arr_<line> = iterable
                 self.stmt(&Stmt::Let {
                     pattern: DestructPattern::Ident(arr_ident.clone()),
                     init: iterable.clone(),
                     pos: *pos,
                 })?;
-                self.stmt(&Stmt::Let {
+                // mut __idx_<line> = 0
+                self.stmt(&Stmt::Mut {
                     pattern: DestructPattern::Ident(idx_ident.clone()),
                     init: Expr::Num(0.0, *pos),
                     pos: *pos,
@@ -461,34 +472,42 @@ impl Comp {
                 self.loop_stack
                     .push((loop_start, None, Vec::new(), Vec::new()));
 
+                // Loop condition: __idx < len(__arr)
+                // Lt pops b then a, computes a < b. So push idx first, then len.
                 self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
+                self.emit_op(Op::GetBuiltin);
+                self.emit_u16(1); // len is builtin index 1
                 self.expr(&Expr::Ident(arr_ident.clone(), *pos))?;
-                self.emit_op(Op::Index);
-                self.stmt(&Stmt::Let {
-                    pattern: DestructPattern::Ident(var.clone()),
-                    init: Expr::Null(*pos),
-                    pos: *pos,
-                })?;
+                self.emit_op(Op::Call);
+                self.emit_u16(1);
+                self.emit_op(Op::Lt);
+                let continue_check = self.emit_jump_if_false_pop();
 
+                // Bind __arr[__idx] to var: push arr, push idx, Index, then store to var.
+                self.expr(&Expr::Ident(arr_ident.clone(), *pos))?;
                 self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
-                self.expr(&Expr::Ident(arr_ident.clone(), *pos))?;
                 self.emit_op(Op::Index);
-
-                let continue_check = self.emit_jump_if_false();
+                // Store the indexed value into var (reuse Let with init=Null trick won't work;
+                // instead emit SetLocal/SetGlobal directly via compile_destruct_pattern,
+                // which pops the value from the stack).
+                self.compile_destruct_pattern(&DestructPattern::Ident(var.clone()), *pos)?;
 
                 self.stmt(body)?;
 
-                let _update_pos = self.bytecode.len();
+                // __idx = __idx + 1  (Add result is on stack top, store directly)
                 self.expr(&Expr::Ident(idx_ident.clone(), *pos))?;
                 self.emit_op(Op::Constant);
                 let const_idx = self.add_constant(Value::Num(1.0));
                 self.emit_u16(const_idx as u16);
                 self.emit_op(Op::Add);
-                self.stmt(&Stmt::Assign {
-                    target: AssignTarget::Ident(idx_ident.clone()),
-                    value: Expr::Ident(idx_ident.clone(), *pos),
-                    pos: *pos,
-                })?;
+                // Store the Add result back to __idx
+                if let Some(idx) = self.locals.iter().position(|(n, _)| n == &idx_ident) {
+                    self.emit_op(Op::SetLocal);
+                    self.emit_u16(idx as u16);
+                } else if let Some(&(idx, _)) = self.globals.get(&idx_ident) {
+                    self.emit_op(Op::SetGlobal);
+                    self.emit_u16(idx as u16);
+                }
 
                 let jump_back = self.bytecode.len();
                 self.emit_op(Op::Jump);
@@ -497,7 +516,6 @@ impl Comp {
 
                 let pre_cleanup_len = self.bytecode.len();
                 self.patch_jump(continue_check);
-                self.emit_op(Op::Pop);
                 self.emit_op(Op::Null);
 
                 self.patch_continue_jumps(loop_start);

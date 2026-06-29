@@ -1129,12 +1129,23 @@ impl VM {
                             if idx < elements.len() {
                                 self.stack.push(elements[idx].clone());
                             } else {
-                                return Err(Error::Runtime {
-            input: None,
-            filename: None,
-                                    pos: None,
-                                    msg: format!("array index out of bounds: {}", idx),
-                                });
+                                self.stack.push(Value::Null);
+                            }
+                        }
+                        (Value::Str(s), Value::Num(idx)) => {
+                            let idx = idx as usize;
+                            if idx < s.len() {
+                                self.stack.push(Value::Str(s.chars().nth(idx).unwrap().to_string()));
+                            } else {
+                                self.stack.push(Value::Null);
+                            }
+                        }
+                        (Value::Object(obj), Value::Str(key)) => {
+                            let map = obj.borrow();
+                            if let Some(val) = map.get(&key) {
+                                self.stack.push(val.clone());
+                            } else {
+                                self.stack.push(Value::Null);
                             }
                         }
                         _ => {
@@ -1158,15 +1169,14 @@ impl VM {
                             let mut elements = arr.borrow_mut();
                             if idx < elements.len() {
                                 elements[idx] = val;
-                                self.stack.push(Value::Null);
-                            } else {
-                                return Err(Error::Runtime {
-            input: None,
-            filename: None,
-                                    pos: None,
-                                    msg: format!("array index out of bounds: {}", idx),
-                                });
+                            } else if idx == elements.len() {
+                                elements.push(val);
                             }
+                            self.stack.push(Value::Null);
+                        }
+                        (Value::Object(obj), Value::Str(key), val) => {
+                            obj.borrow_mut().insert(key, val);
+                            self.stack.push(Value::Null);
                         }
                         _ => {
                             return Err(Error::Runtime {
@@ -1795,6 +1805,22 @@ impl VM {
                                             let elems = arr.borrow();
                                             if idx < elems.len() {
                                                 self.stack.push(elems[idx].clone());
+                                            } else {
+                                                self.stack.push(Value::Null);
+                                            }
+                                        }
+                                        (Value::Str(s), Value::Num(idx)) => {
+                                            let idx = idx as usize;
+                                            if idx < s.len() {
+                                                self.stack.push(Value::Str(s.chars().nth(idx).unwrap().to_string()));
+                                            } else {
+                                                self.stack.push(Value::Null);
+                                            }
+                                        }
+                                        (Value::Object(obj), Value::Str(key)) => {
+                                            let map = obj.borrow();
+                                            if let Some(val) = map.get(&key) {
+                                                self.stack.push(val.clone());
                                             } else {
                                                 self.stack.push(Value::Null);
                                             }

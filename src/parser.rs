@@ -10,6 +10,18 @@ pub struct P<'a> {
     labels: HashMap<String, Pos>,
     loop_stack: Vec<Option<String>>,
     input: &'a str,
+    // When true, the parser is inside an array/object/paren container where
+    // commas separate elements, so `pipe()` must NOT treat `,` as a multi-arg
+    // pipe separator.
+    in_container: bool,
+    // Lookahead buffer for 1-token peek.
+    lookahead: Option<Tok>,
+}
+
+fn peek_next_two(scan: &mut Lex) -> (Tok, Tok) {
+    let first = scan.next();
+    let second = scan.next();
+    (first, second)
 }
 
 impl<'a> P<'a> {
@@ -22,6 +34,8 @@ impl<'a> P<'a> {
             labels: HashMap::new(),
             loop_stack: Vec::new(),
             input,
+            in_container: false,
+            lookahead: None,
         }
     }
 
@@ -49,7 +63,23 @@ impl<'a> P<'a> {
             Tok::Match(pos) => self.match_stmt(pos),
             Tok::Throw(pos) => self.throw_stmt(pos),
             Tok::Try(pos) => self.try_stmt(pos),
-            Tok::LBrace(_) => self.block(),
+            Tok::LBrace(_) => {
+                // Disambiguate: `{` could be a block or an object literal.
+                // Object literal if next token is `Str` (string key dict).
+                if matches!(self.peek_next(), Tok::Str(_, _)) {
+                    let e = self.expr()?;
+                    let tok2 = self.cur.clone();
+                    match tok2 {
+                        Tok::Semicolon(_) => {
+                            self.consume();
+                            Ok(Stmt::Expr(e))
+                        }
+                        _ => Ok(Stmt::Expr(e)),
+                    }
+                } else {
+                    self.block()
+                }
+            }
             Tok::Semicolon(pos) => {
                 self.consume();
                 Ok(Stmt::Expr(Expr::Null(pos)))
@@ -163,8 +193,8 @@ impl<'a> P<'a> {
     fn expr_to_assign_target(&self, expr: Expr) -> Result<AssignTarget, Error> {
         match expr {
             Expr::Ident(name, _) => Ok(AssignTarget::Ident(name)),
-            Expr::Index { object, index, pos } => Ok(AssignTarget::Index { object, index }),
-            Expr::Field { object, field, pos } => Ok(AssignTarget::Field { object, field }),
+            Expr::Index { object, index, .. } => Ok(AssignTarget::Index { object, index }),
+            Expr::Field { object, field, .. } => Ok(AssignTarget::Field { object, field }),
             _ => Err(Error::Compile {
             input: None,
             filename: None,
@@ -276,17 +306,32 @@ impl<'a> P<'a> {
 
     fn for_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
         self.consume();
-        self.expect_lparen()?;
+
+        // Support both `for (let/mut var in iterable) { body }` and
+        // `for var in iterable { body }` (no parens, no let/mut).
+        let has_paren = matches!(self.cur, Tok::LParen(_));
+        if has_paren {
+            self.consume();
+        }
 
         if matches!(self.cur, Tok::Let(_)) || matches!(self.cur, Tok::Mut(_)) {
-            let is_mut = matches!(self.cur, Tok::Mut(_));
             self.consume();
-            let var = self.expect_ident()?;
+        }
 
+        // Check if this looks like a for-in loop: identifier followed by 'in'
+        if matches!(self.cur, Tok::Ident(_, _)) {
+            let saved = self.cur.clone();
+            self.consume();
             if matches!(self.cur, Tok::In(_)) {
+                let var = match saved {
+                    Tok::Ident(name, _) => name,
+                    _ => unreachable!(),
+                };
                 self.consume();
                 let iterable = self.expr()?;
-                self.expect_rparen()?;
+                if has_paren {
+                    self.expect_rparen()?;
+                }
                 self.loop_stack.push(None);
                 let body = Box::new(self.block()?);
                 self.loop_stack.pop();
@@ -297,13 +342,18 @@ impl<'a> P<'a> {
                     pos,
                 });
             } else {
-                return Err(Error::Compile {
+                // Not a for-in, backtrack
+                self.cur = saved;
+            }
+        }
+
+        if !has_paren {
+            return Err(Error::Compile {
             input: None,
             filename: None,
-                    pos,
-                    msg: format!("expected 'in' in for loop, found {}", self.cur.describe()),
-                });
-            }
+                pos,
+                msg: "expected 'for var in iterable' or 'for (;cond;update)'".to_string(),
+            });
         }
 
         let init = if matches!(self.cur, Tok::Semicolon(_)) {
@@ -531,7 +581,7 @@ impl<'a> P<'a> {
                 self.consume();
                 Ok(Pattern::OptionNone)
             }
-            Tok::Ident(name, pos) => {
+            Tok::Ident(name, _) => {
                 self.consume();
                 if matches!(self.cur, Tok::DoubleColon(_)) {
                     self.consume();
@@ -744,6 +794,15 @@ impl<'a> P<'a> {
                 let func = self.equality()?;
                 let has_placeholder = self.has_placeholder(&func);
 
+                // `x |> f()` should mean `f(x)`: if func is an empty-arg
+                // call (Pipe{args:[], func:g}), fold our args into it.
+                let (args, func) = match func {
+                    Expr::Pipe { args: inner_args, func: inner_func, .. } if inner_args.is_empty() && !self.has_placeholder(&inner_func) => {
+                        (args, *inner_func)
+                    }
+                    other => (args, other),
+                };
+
                 let pipe_expr = Expr::Pipe {
                     args,
                     func: Box::new(func),
@@ -766,6 +825,12 @@ impl<'a> P<'a> {
                 Ok(pipe_expr)
             }
             Tok::Comma(_) => {
+                // Inside array/object/paren containers, commas separate
+                // elements and must NOT be consumed as pipe arg separators.
+                if self.in_container {
+                    return Ok(first);
+                }
+                // Multi-argument pipe: a, b, c |> f
                 let mut args = vec![first];
                 self.consume();
                 args.push(self.equality()?);
@@ -775,9 +840,8 @@ impl<'a> P<'a> {
                     args.push(self.equality()?);
                 }
 
-                if matches!(self.cur, Tok::Pipe(_)) {
+                if let Tok::Pipe(pos) = self.cur.clone() {
                     self.consume();
-
                     let func = self.equality()?;
                     let has_placeholder = self.has_placeholder(&func);
 
@@ -785,7 +849,7 @@ impl<'a> P<'a> {
                         args,
                         func: Box::new(func),
                         has_placeholder,
-                        pos: Pos { line: 1, col: 1 },
+                        pos,
                     };
 
                     if matches!(self.cur, Tok::Pipe(_)) {
@@ -803,6 +867,9 @@ impl<'a> P<'a> {
                     return Ok(pipe_expr);
                 }
 
+                // No pipe follows the comma-list: not a valid expression form.
+                // Return the first element and let the caller decide what to do
+                // with the remaining commas (typically a syntax error upstream).
                 if args.len() == 1 {
                     Ok(args.into_iter().next().unwrap())
                 } else {
@@ -1116,7 +1183,10 @@ impl<'a> P<'a> {
             match tok {
                 Tok::LBracket(pos) => {
                     self.consume();
+                    let prev = self.in_container;
+                    self.in_container = true;
                     let index = self.expr()?;
+                    self.in_container = prev;
                     self.expect_rbracket()?;
                     callee = Expr::Index {
                         object: Box::new(callee),
@@ -1140,6 +1210,28 @@ impl<'a> P<'a> {
                             pos,
                         };
                     }
+                }
+                Tok::LParen(pos) => {
+                    // Function call suffix: f(args...)
+                    self.consume();
+                    let mut args = Vec::new();
+                    let prev = self.in_container;
+                    self.in_container = true;
+                    if !matches!(self.cur, Tok::RParen(_)) {
+                        args.push(self.expr()?);
+                        while matches!(self.cur, Tok::Comma(_)) {
+                            self.consume();
+                            args.push(self.expr()?);
+                        }
+                    }
+                    self.in_container = prev;
+                    self.expect_rparen()?;
+                    callee = Expr::Pipe {
+                        args,
+                        func: Box::new(callee),
+                        has_placeholder: false,
+                        pos,
+                    };
                 }
                 Tok::DoubleColon(pos) => {
                     self.consume();
@@ -1242,7 +1334,10 @@ impl<'a> P<'a> {
             Tok::LBrace(_) => self.object_literal(),
             Tok::LParen(_) => {
                 self.consume();
+                let prev = self.in_container;
+                self.in_container = true;
                 let e = self.expr()?;
+                self.in_container = prev;
                 self.expect_rparen()?;
                 Ok(e)
             }
@@ -1326,7 +1421,10 @@ impl<'a> P<'a> {
         self.consume();
 
         if !matches!(self.cur, Tok::RBracket(_)) {
+            let prev = self.in_container;
+            self.in_container = true;
             let first_expr = self.expr()?;
+            self.in_container = prev;
 
             if matches!(self.cur, Tok::For(_)) {
                 self.consume();
@@ -1356,7 +1454,11 @@ impl<'a> P<'a> {
             let mut elements = vec![first_expr];
             while matches!(self.cur, Tok::Comma(_)) {
                 self.consume();
-                elements.push(self.expr()?);
+                let prev = self.in_container;
+                self.in_container = true;
+                let e = self.expr()?;
+                self.in_container = prev;
+                elements.push(e);
             }
             self.expect_rbracket()?;
             return Ok(Expr::Array(elements, pos));
@@ -1371,15 +1473,57 @@ impl<'a> P<'a> {
         self.consume();
         let mut fields = Vec::new();
         if !matches!(self.cur, Tok::RBrace(_)) {
-            let name = self.expect_ident()?;
-            self.expect_colon()?;
+            // Support both {ident: expr} and {"key" = expr}
+            let name = if matches!(self.cur, Tok::Str(_, _)) {
+                let Tok::Str(s, _) = self.cur.clone() else { unreachable!() };
+                self.consume();
+                s
+            } else {
+                self.expect_ident()?
+            };
+            // Accept either ':' or '=' as separator
+            if matches!(self.cur, Tok::Colon(_)) {
+                self.consume();
+            } else if matches!(self.cur, Tok::Assign(_)) {
+                self.consume();
+            } else {
+                return Err(Error::Syntax {
+                    filename: None,
+                    pos: self.pos(),
+                    msg: format!("expected ':' or '=' in object literal, found {}", self.cur.describe()),
+                    input: self.input.to_string(),
+                });
+            }
+            let prev = self.in_container;
+            self.in_container = true;
             let value = self.expr()?;
+            self.in_container = prev;
             fields.push((name, value));
             while matches!(self.cur, Tok::Comma(_)) {
                 self.consume();
-                let name = self.expect_ident()?;
-                self.expect_colon()?;
+                let name = if matches!(self.cur, Tok::Str(_, _)) {
+                    let Tok::Str(s, _) = self.cur.clone() else { unreachable!() };
+                    self.consume();
+                    s
+                } else {
+                    self.expect_ident()?
+                };
+                if matches!(self.cur, Tok::Colon(_)) {
+                    self.consume();
+                } else if matches!(self.cur, Tok::Assign(_)) {
+                    self.consume();
+                } else {
+                    return Err(Error::Syntax {
+                        filename: None,
+                        pos: self.pos(),
+                        msg: format!("expected ':' or '=' in object literal, found {}", self.cur.describe()),
+                        input: self.input.to_string(),
+                    });
+                }
+                let prev = self.in_container;
+                self.in_container = true;
                 let value = self.expr()?;
+                self.in_container = prev;
                 fields.push((name, value));
             }
         }
@@ -1469,7 +1613,19 @@ impl<'a> P<'a> {
     }
 
     fn consume(&mut self) {
-        self.cur = self.lex.next();
+        if let Some(saved) = self.lookahead.take() {
+            self.cur = saved;
+        } else {
+            self.cur = self.lex.next();
+        }
+    }
+
+    /// Peek at the next token without consuming it.
+    fn peek_next(&mut self) -> Tok {
+        if self.lookahead.is_none() {
+            self.lookahead = Some(self.lex.next());
+        }
+        self.lookahead.as_ref().unwrap().clone()
     }
 
     fn expect_ident(&mut self) -> Result<String, Error> {
