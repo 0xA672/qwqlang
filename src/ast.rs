@@ -1,5 +1,44 @@
 use std::fmt;
 
+// ============================================================
+// Type representation for gradual typing
+// ============================================================
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Num,
+    Str,
+    Bool,
+    Null,
+    Dyn,                        // unannotated / unknown
+    Array(Box<Type>),           // [Num]
+    Object(Box<Type>),          // {Str}  — value type
+    Function {
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
+    Named(String),              // user-defined (Enum/Struct)
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Type::Num => write!(f, "Num"),
+            Type::Str => write!(f, "Str"),
+            Type::Bool => write!(f, "Bool"),
+            Type::Null => write!(f, "Null"),
+            Type::Dyn => write!(f, "Dyn"),
+            Type::Array(t) => write!(f, "[{}]", t),
+            Type::Object(t) => write!(f, "{{{}}}", t),
+            Type::Function { params, ret } => {
+                let ps: Vec<String> = params.iter().map(|p| p.to_string()).collect();
+                write!(f, "({}) -> {}", ps.join(", "), ret)
+            }
+            Type::Named(n) => write!(f, "{}", n),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pos {
     pub line: usize,
@@ -10,11 +49,13 @@ pub struct Pos {
 pub enum Stmt {
     Let {
         pattern: DestructPattern,
+        type_anno: Option<Type>,
         init: Expr,
         pos: Pos,
     },
     Mut {
         pattern: DestructPattern,
+        type_anno: Option<Type>,
         init: Expr,
         pos: Pos,
     },
@@ -163,13 +204,15 @@ pub enum Expr {
         pos: Pos,
     },
     Func {
-        params: Vec<String>,
+        params: Vec<(String, Option<Type>)>,
+        ret_type: Option<Type>,
         captures: Vec<String>,
         body: Box<Stmt>,
         pos: Pos,
     },
     Arrow {
-        params: Vec<String>,
+        params: Vec<(String, Option<Type>)>,
+        ret_type: Option<Type>,
         body: Box<Expr>,
         is_block: bool,
         pos: Pos,

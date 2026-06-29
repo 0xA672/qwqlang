@@ -1557,6 +1557,43 @@ impl VM {
                     }
                     self.call_stack.last_mut().unwrap().ip += 1;
                 }
+                // Runtime type guards (gradual typing)
+                Op::CheckNum => {
+                    let val = self.stack.last().unwrap_or(&Value::Null).clone();
+                    if !matches!(val, Value::Num(_)) {
+                        return Err(Error::Runtime {
+            input: None,
+            filename: None,
+                            pos: None,
+                            msg: format!("TypeError: expected Num, got {:?}", val),
+                        });
+                    }
+                    self.call_stack.last_mut().unwrap().ip += 1;
+                }
+                Op::CheckStr => {
+                    let val = self.stack.last().unwrap_or(&Value::Null).clone();
+                    if !matches!(val, Value::Str(_)) {
+                        return Err(Error::Runtime {
+            input: None,
+            filename: None,
+                            pos: None,
+                            msg: format!("TypeError: expected Str, got {:?}", val),
+                        });
+                    }
+                    self.call_stack.last_mut().unwrap().ip += 1;
+                }
+                Op::CheckBool => {
+                    let val = self.stack.last().unwrap_or(&Value::Null).clone();
+                    if !matches!(val, Value::Bool(_)) {
+                        return Err(Error::Runtime {
+            input: None,
+            filename: None,
+                            pos: None,
+                            msg: format!("TypeError: expected Bool, got {:?}", val),
+                        });
+                    }
+                    self.call_stack.last_mut().unwrap().ip += 1;
+                }
                 Op::ListComp => {
                     let func_idx = read_u16(bytecode, ip + 1) as usize;
                     let iterable = self.stack.pop().unwrap_or(Value::Null);

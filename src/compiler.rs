@@ -1,4 +1,4 @@
-use crate::ast::{AssignTarget, BinOp, DestructPattern, Expr, Pattern, Pos, Stmt, TemplatePart, UnaryOp};
+use crate::ast::{AssignTarget, BinOp, DestructPattern, Expr, Pattern, Pos, Stmt, TemplatePart, Type, UnaryOp};
 use crate::error::{levenshtein, Error};
 use crate::vm::{CompiledFunction, Value};
 use std::collections::{HashMap, HashSet};
@@ -67,6 +67,10 @@ pub enum Op {
     // String operations
     Concat = 55,
     ListComp = 56,
+    // Runtime type guards (gradual typing)
+    CheckNum = 58,
+    CheckStr = 59,
+    CheckBool = 60,
 }
 
 #[derive(Debug)]
@@ -158,7 +162,7 @@ impl Comp {
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), Error> {
         match stmt {
-            Stmt::Let { pattern, init, pos } => {
+            Stmt::Let { pattern, init, pos, .. } => {
                 // Handle function global registration for simple identifier patterns
                 if self.func_stack.is_empty() && matches!(init, Expr::Func { .. }) {
                     if let DestructPattern::Ident(name) = pattern {
@@ -172,7 +176,7 @@ impl Comp {
                 self.expr(init)?;
                 self.compile_destruct_pattern(pattern, *pos)?;
             }
-            Stmt::Mut { pattern, init, pos } => {
+            Stmt::Mut { pattern, init, pos, .. } => {
                 self.expr(init)?;
                 self.compile_destruct_pattern_mut(pattern, *pos)?;
             }
@@ -458,12 +462,15 @@ impl Comp {
                 // let __arr_<line> = iterable
                 self.stmt(&Stmt::Let {
                     pattern: DestructPattern::Ident(arr_ident.clone()),
-                    init: iterable.clone(),
+
+                    type_anno: None,
+                init: iterable.clone(),
                     pos: *pos,
                 })?;
                 // mut __idx_<line> = 0
                 self.stmt(&Stmt::Mut {
                     pattern: DestructPattern::Ident(idx_ident.clone()),
+                    type_anno: None,
                     init: Expr::Num(0.0, *pos),
                     pos: *pos,
                 })?;
@@ -803,6 +810,7 @@ impl Comp {
                                 self.emit_op(Op::Pop);
                                 self.stmt(&Stmt::Let {
                                     pattern: DestructPattern::Ident(name.clone()),
+                    type_anno: None,
                                     init: Expr::Null(Pos { line: 1, col: 1 }),
                                     pos: Pos { line: 1, col: 1 },
                                 })?;
@@ -813,6 +821,7 @@ impl Comp {
                                 self.emit_op(Op::Pop);
                                 self.stmt(&Stmt::Let {
                                     pattern: DestructPattern::Ident(name.clone()),
+                    type_anno: None,
                                     init: Expr::Null(Pos { line: 1, col: 1 }),
                                     pos: Pos { line: 1, col: 1 },
                                 })?;
@@ -842,6 +851,7 @@ impl Comp {
                                     Pattern::Ident(name) => {
                                         self.stmt(&Stmt::Let {
                                             pattern: DestructPattern::Ident(name.clone()),
+                    type_anno: None,
                                             init: Expr::Null(Pos { line: 1, col: 1 }),
                                             pos: Pos { line: 1, col: 1 },
                                         })?;
@@ -882,6 +892,7 @@ impl Comp {
                                     Pattern::Ident(name) => {
                                         self.stmt(&Stmt::Let {
                                             pattern: DestructPattern::Ident(name.clone()),
+                    type_anno: None,
                                             init: Expr::Null(Pos { line: 1, col: 1 }),
                                             pos: Pos { line: 1, col: 1 },
                                         })?;
@@ -923,6 +934,7 @@ impl Comp {
                                 self.emit_op(Op::Pop);
                                 self.stmt(&Stmt::Let {
                                     pattern: DestructPattern::Ident(binding_name.clone()),
+                    type_anno: None,
                                     init: Expr::Null(Pos { line: 1, col: 1 }),
                                     pos: Pos { line: 1, col: 1 },
                                 })?;
@@ -951,6 +963,7 @@ impl Comp {
                             self.emit_op(Op::UnwrapOk);
                             self.stmt(&Stmt::Let {
                                 pattern: DestructPattern::Ident(binding.clone()),
+                    type_anno: None,
                                 init: Expr::Null(Pos { line: 1, col: 1 }),
                                 pos: Pos { line: 1, col: 1 },
                             })?;
@@ -975,6 +988,7 @@ impl Comp {
                             self.emit_op(Op::UnwrapErr);
                             self.stmt(&Stmt::Let {
                                 pattern: DestructPattern::Ident(binding.clone()),
+                    type_anno: None,
                                 init: Expr::Null(Pos { line: 1, col: 1 }),
                                 pos: Pos { line: 1, col: 1 },
                             })?;
@@ -999,6 +1013,7 @@ impl Comp {
                             self.emit_op(Op::UnwrapSome);
                             self.stmt(&Stmt::Let {
                                 pattern: DestructPattern::Ident(binding.clone()),
+                    type_anno: None,
                                 init: Expr::Null(Pos { line: 1, col: 1 }),
                                 pos: Pos { line: 1, col: 1 },
                             })?;
@@ -1208,7 +1223,7 @@ impl Comp {
                         pos: Pos { line: 1, col: 1 },
                     }]);
                     self.compile_func(
-                        &["_".to_string()],
+                        &[("_".to_string(), None)],
                         &[],
                         &body_stmt,
                         Pos { line: 1, col: 1 },
@@ -1227,12 +1242,7 @@ impl Comp {
                     self.emit_u16(args.len() as u16);
                 }
             }
-            Expr::Func {
-                params,
-                captures,
-                body,
-                pos,
-            } => {
+            Expr::Func { params, captures, body, pos, .. } => {
                 self.compile_func(params, captures, body, *pos)?;
             }
             Expr::Arrow {
@@ -1241,15 +1251,11 @@ impl Comp {
                 is_block,
                 ..
             } => {
+                let param_names: Vec<(String, Option<Type>)> = params.clone();
                 if *is_block {
-                    if let Expr::Func {
-                        params: _,
-                        captures: _,
-                        body: inner_body,
-                        pos: _,
-                    } = &**body
+                    if let Expr::Func { params: _, captures: _, body: inner_body, pos: _, .. } = &**body
                     {
-                        self.compile_func(params, &[], &**inner_body, Pos { line: 1, col: 1 })?;
+                        self.compile_func(&param_names, &[], &**inner_body, Pos { line: 1, col: 1 })?;
                     }
                 } else {
                     let body_expr = (**body).clone();
@@ -1257,7 +1263,7 @@ impl Comp {
                         value: Some(body_expr),
                         pos: Pos { line: 1, col: 1 },
                     }]);
-                    self.compile_func(params, &[], &body_stmt, Pos { line: 1, col: 1 })?;
+                    self.compile_func(&param_names, &[], &body_stmt, Pos { line: 1, col: 1 })?;
                 }
             }
         }
@@ -1282,7 +1288,7 @@ impl Comp {
 
     fn compile_func(
         &mut self,
-        params: &[String],
+        params: &[(String, Option<Type>)],
         captures: &[String],
         body: &Stmt,
         pos: Pos,
@@ -1295,7 +1301,7 @@ impl Comp {
         self.free = Vec::new();
         self.loop_stack = Vec::new();
 
-        for param in params {
+        for (param, _ty) in params {
             self.locals.push((param.clone(), false));
         }
 
@@ -1311,7 +1317,7 @@ impl Comp {
         self.find_declared_vars(body, &mut declared);
 
         for var in &vars_used {
-            if params.contains(var) {
+            if params.iter().any(|(n, _)| n == var) {
                 continue;
             }
             if declared.contains(var) {

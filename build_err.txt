@@ -1,0 +1,96 @@
+   Compiling qwqlang v0.1.0 (D:\qwqlang)
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:466:28
+    |
+466 |                 self.stmt(&Stmt::Mut {
+    |                            ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:805:44
+    |
+805 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:815:44
+    |
+815 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:844:52
+    |
+844 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:884:52
+    |
+884 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:925:44
+    |
+925 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:953:40
+    |
+953 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+   --> src\compiler.rs:977:40
+    |
+977 | ...                   self.stmt(&Stmt::Let {
+    |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0063]: missing field `type_anno` in initializer of `Stmt`
+    --> src\compiler.rs:1001:40
+     |
+1001 | ...                   self.stmt(&Stmt::Let {
+     |                                  ^^^^^^^^^ missing `type_anno`
+
+error[E0308]: mismatched types
+    --> src\compiler.rs:1244:43
+     |
+1244 |                         self.compile_func(params, &[], &**inner_body, Pos { line: 1, col: 1 })?;
+     |                              ------------ ^^^^^^ expected `&[String]`, found `&Vec<(String, Option<Type>)>`
+     |                              |
+     |                              arguments to this method are incorrect
+     |
+     = note: expected reference `&[String]`
+                found reference `&Vec<(String, Option<ast::Type>)>`
+note: method defined here
+    --> src\compiler.rs:1275:8
+     |
+1275 |     fn compile_func(
+     |        ^^^^^^^^^^^^
+1276 |         &mut self,
+1277 |         params: &[String],
+     |         -----------------
+
+error[E0308]: mismatched types
+    --> src\compiler.rs:1252:39
+     |
+1252 |                     self.compile_func(params, &[], &body_stmt, Pos { line: 1, col: 1 })?;
+     |                          ------------ ^^^^^^ expected `&[String]`, found `&Vec<(String, Option<Type>)>`
+     |                          |
+     |                          arguments to this method are incorrect
+     |
+     = note: expected reference `&[String]`
+                found reference `&Vec<(String, Option<ast::Type>)>`
+note: method defined here
+    --> src\compiler.rs:1275:8
+     |
+1275 |     fn compile_func(
+     |        ^^^^^^^^^^^^
+1276 |         &mut self,
+1277 |         params: &[String],
+     |         -----------------
+
+Some errors have detailed explanations: E0063, E0308.
+For more information about an error, try `rustc --explain E0063`.
+error: could not compile `qwqlang` (lib) due to 11 previous errors

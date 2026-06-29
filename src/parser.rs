@@ -1,4 +1,4 @@
-use crate::ast::{AssignTarget, BinOp, DestructPattern, Expr, MatchArm, Pattern, Pos, Stmt, TemplatePart, UnaryOp};
+use crate::ast::{AssignTarget, BinOp, DestructPattern, Expr, MatchArm, Pattern, Pos, Stmt, TemplatePart, Type, UnaryOp};
 use crate::error::Error;
 use crate::lexer::{Lex, Tok};
 use std::collections::HashMap;
@@ -113,19 +113,21 @@ impl<'a> P<'a> {
     fn let_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
         self.consume();
         let pattern = self.destruct_pattern()?;
+        let type_anno = self.parse_opt_type();
         self.expect_assign()?;
         let init = self.expr()?;
         self.consume_semicolon()?;
-        Ok(Stmt::Let { pattern, init, pos })
+        Ok(Stmt::Let { pattern, type_anno, init, pos })
     }
 
     fn mut_stmt(&mut self, pos: Pos) -> Result<Stmt, Error> {
         self.consume();
         let pattern = self.destruct_pattern()?;
+        let type_anno = self.parse_opt_type();
         self.expect_assign()?;
         let init = self.expr()?;
         self.consume_semicolon()?;
-        Ok(Stmt::Mut { pattern, init, pos })
+        Ok(Stmt::Mut { pattern, type_anno, init, pos })
     }
 
     fn destruct_pattern(&mut self) -> Result<DestructPattern, Error> {
@@ -210,10 +212,10 @@ impl<'a> P<'a> {
         self.expect_lparen()?;
         let mut params = Vec::new();
         if !matches!(self.cur, Tok::RParen(_)) {
-            params.push(self.expect_ident()?);
+            params.push((self.expect_ident()?, None));
             while let Tok::Comma(_) = self.cur.clone() {
                 self.consume();
-                params.push(self.expect_ident()?);
+                params.push((self.expect_ident()?, None));
             }
         }
         self.expect_rparen()?;
@@ -233,8 +235,10 @@ impl<'a> P<'a> {
         self.consume_semicolon()?;
         Ok(Stmt::Let {
             pattern: DestructPattern::Ident(name),
+            type_anno: None,
             init: Expr::Func {
                 params,
+                ret_type: None,
                 captures,
                 body,
                 pos,
@@ -1536,13 +1540,18 @@ impl<'a> P<'a> {
         self.expect_lparen()?;
         let mut params = Vec::new();
         if !matches!(self.cur, Tok::RParen(_)) {
-            params.push(self.expect_ident()?);
+            let name = self.expect_ident()?;
+            let ty = self.parse_opt_type();
+            params.push((name, ty));
             while let Tok::Comma(_) = self.cur.clone() {
                 self.consume();
-                params.push(self.expect_ident()?);
+                let name = self.expect_ident()?;
+                let ty = self.parse_opt_type();
+                params.push((name, ty));
             }
         }
         self.expect_rparen()?;
+        let ret_type = self.parse_opt_type();
         let mut captures = Vec::new();
         if let Tok::LBracket(_) = self.cur.clone() {
             self.consume();
@@ -1558,6 +1567,7 @@ impl<'a> P<'a> {
         let body = Box::new(self.block()?);
         Ok(Expr::Func {
             params,
+            ret_type,
             captures,
             body,
             pos,
@@ -1575,10 +1585,14 @@ impl<'a> P<'a> {
         self.consume();
         let mut params = Vec::new();
         if !matches!(self.cur, Tok::PipeSingle(_)) {
-            params.push(self.expect_ident()?);
+            let name = self.expect_ident()?;
+            let ty = self.parse_opt_type();
+            params.push((name, ty));
             while let Tok::Comma(_) = self.cur.clone() {
                 self.consume();
-                params.push(self.expect_ident()?);
+                let name = self.expect_ident()?;
+                let ty = self.parse_opt_type();
+                params.push((name, ty));
             }
         }
         if let Tok::PipeSingle(_) = self.cur.clone() {
@@ -1591,10 +1605,12 @@ impl<'a> P<'a> {
                 input: self.input.to_string(),
             });
         }
+        let ret_type = self.parse_opt_type();
         let (body, is_block) = if let Tok::LBrace(_) = self.cur.clone() {
             let body = self.block()?;
             let body_expr = Expr::Func {
                 params: Vec::new(),
+                ret_type: None,
                 captures: Vec::new(),
                 body: Box::new(body),
                 pos,
@@ -1606,6 +1622,7 @@ impl<'a> P<'a> {
         };
         Ok(Expr::Arrow {
             params,
+            ret_type,
             body,
             is_block,
             pos,
@@ -1724,6 +1741,53 @@ impl<'a> P<'a> {
                 msg: format!("expected ':', found {}", self.cur.describe()),
                 input: self.input.to_string(),
             })
+        }
+    }
+
+    /// Parse an optional `: Type` annotation.
+    fn parse_opt_type(&mut self) -> Option<Type> {
+        if matches!(self.cur, Tok::Colon(_)) {
+            self.consume();
+            self.parse_type().ok()
+        } else {
+            None
+        }
+    }
+
+    /// Parse a type expression: Num | Str | Bool | Null | Dyn | [Type] | {Type} | identifier
+    fn parse_type(&mut self) -> Result<Type, Error> {
+        let pos = self.pos();
+        match &self.cur.clone() {
+            Tok::Ident(name, _) => {
+                let s = name.clone();
+                self.consume();
+                match s.as_str() {
+                    "Num" => Ok(Type::Num),
+                    "Str" => Ok(Type::Str),
+                    "Bool" => Ok(Type::Bool),
+                    "Null" => Ok(Type::Null),
+                    "Dyn" | "?" => Ok(Type::Dyn),
+                    _ => Ok(Type::Named(s)),
+                }
+            }
+            Tok::LBracket(_) => {
+                self.consume();
+                let inner = self.parse_type()?;
+                self.expect_rbracket()?;
+                Ok(Type::Array(Box::new(inner)))
+            }
+            Tok::LBrace(_) => {
+                self.consume();
+                let inner = self.parse_type()?;
+                self.expect_rbrace()?;
+                Ok(Type::Object(Box::new(inner)))
+            }
+            _ => Err(Error::Syntax {
+                filename: None,
+                pos,
+                msg: format!("expected type, found {}", self.cur.describe()),
+                input: self.input.to_string(),
+            }),
         }
     }
 
